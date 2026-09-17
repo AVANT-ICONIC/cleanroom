@@ -1,0 +1,6 @@
+node_modules/
+.DS_Store
+coverage/
+*.tgz
+.greenroom/cleanup-plan.json
+.greenroom/cleanup-plan.md

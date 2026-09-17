@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "createdAt": "2026-09-17T10:31:30.229Z",
+  "policyHash": "0c35c9cd837032e476338f33d0fa8a399db7ad5e23990ecee85b5c2b79651f9d",
+  "waiversHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "registryHash": "a69eb2bb25459056620825a687530298d33ce250fa6e5a25e78df1d59741e4d3",
+  "generatedHash": "53a517262d3ccab087ea5f111e8f28c293e696aa3f3c68b3ed27db301457b718",
+  "entropy": 0,
+  "counts": {},
+  "violations": []
+}

@@ -1,0 +1,49 @@
+{
+  "name": "@avant-iconic/cleanroom",
+  "version": "1.0.0",
+  "description": "A deterministic anti-entropy guardrail for human and agent-generated codebases.",
+  "type": "module",
+  "bin": {
+    "greenroom": "./src/cli.mjs"
+  },
+  "scripts": {
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage",
+    "smoke:consumer": "node ./scripts/smoke-consumer.mjs",
+    "benchmark": "node ./scripts/benchmark.mjs",
+    "verify": "node ./scripts/verify.mjs",
+    "provider:integration": "node ./scripts/provider-integration.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AVANT-ICONIC/cleanroom.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AVANT-ICONIC/cleanroom/issues"
+  },
+  "homepage": "https://github.com/AVANT-ICONIC/cleanroom#readme",
+  "keywords": [
+    "ai-agents",
+    "code-quality",
+    "architecture",
+    "technical-debt",
+    "linting",
+    "design-system",
+    "ci",
+    "agentic-coding"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src",
+    "docs",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md"
+  ]
+}

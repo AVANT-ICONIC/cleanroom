@@ -44,8 +44,12 @@ Built-in checks cover:
 - deletion or rewriting of Green Room's managed agent rules, skill, or CI gate
 - policy, baseline, waiver, and canonical-registry tampering after adoption
 - expired waivers
+- tested-but-production-unreachable (stranded) implementations
+- competing `fix`/`repair`/parallel responsibility candidates
+- generated-artifact missing/staleness evidence
+- unowned scripts when ownership enforcement is enabled
 
-The default scanner is dependency-free at runtime. It uses Node.js and Git only.
+The core scanner is dependency-free at runtime. It uses Node.js and Git only. Optional Fallow, Knip, and project-native graph/runtime evidence can be normalized behind the same provider contract; no external provider gets mutation authority.
 
 ## The ratchet
 
@@ -111,15 +115,22 @@ npx greenroom check
 
 ```text
 greenroom init [--existing] [--baseline]
-greenroom audit [--json]
+greenroom audit [--provider=fallow|knip|project-native] [--json]
+greenroom providers [--provider=fallow|knip|project-native] [--json]
 greenroom baseline [--force --reason="..."]
 greenroom check [--against=<git-ref>] [--json]
 greenroom doctor "task" [--json]
 greenroom find "query" [--json]
-greenroom register <responsibility|component> <name> <path> [--alias=a,b]
+greenroom explain <finding-id> [--json]
+greenroom responsibility list [--json]
+greenroom responsibility show <id> [--json]
+greenroom register <responsibility|component> <name> <path> [--alias=a,b] [--owner=x]
 greenroom clean [--batch-size=12] [--json]
+greenroom cleanup approve <campaign-id> --owner=x --reason="..." [--canonical=path|none]
+greenroom cleanup verify <campaign-id> [--json]
+greenroom cleanup openspec <campaign-id> [--name=change-name] [--no-validate]
 greenroom next [--batch-size=12] [--json]
-greenroom waive <violation-id> --reason="..." [--owner=name] [--expires=YYYY-MM-DD]
+greenroom waive <violation-id> --reason="..." --owner=name --expires=YYYY-MM-DD
 greenroom unwaive <violation-id>
 greenroom version
 ```
@@ -152,7 +163,7 @@ Exit codes are stable for automation:
 }
 ```
 
-`greenroom doctor` uses the registry plus filenames, content, callers, dependencies, and nearby violations to point the agent at the existing implementation before it creates another one.
+`greenroom doctor` uses the registry plus filenames, content, callers, dependencies, and nearby violations to point the agent at the existing implementation before it creates another one. The registry can also hold production entrypoints, tests/docs, generated artifacts, replacement history, caller/directory boundaries, and forbidden recreation patterns.
 
 After adoption, registry changes are governance changes. A feature agent cannot simply delete the `card` registration to make its shiny new `Card.tsx` look legitimate.
 
@@ -170,6 +181,18 @@ app/globals.css
 Raw design values elsewhere are blocked by default. Tune the token paths and permitted files in `.greenroom.json` before the brownfield baseline.
 
 This is intentionally stricter than a prettier. Green Room cares whether the repository has **one design language**, not whether twelve incompatible values are formatted beautifully.
+
+## Optional OpenSpec pairing
+
+OpenSpec is useful for **planning and reviewing a cleanup**, not for detecting the mess. Green Room can export one behavior-preserving cleanup campaign into an existing OpenSpec project:
+
+```bash
+greenroom cleanup openspec <campaign-id>
+```
+
+The generated change uses OpenSpec's pure-refactor shape (`skip_specs: true`) and contains proposal/design/tasks sourced from the Green Room campaign. If the OpenSpec CLI is installed, Green Room validates the generated change. If product behavior changes, use normal OpenSpec delta specs instead of this shortcut.
+
+See [OpenSpec integration](docs/OPENSPEC.md).
 
 ## Human governance
 
@@ -244,7 +267,7 @@ Policy lives in `.greenroom.json`. Important knobs include:
 
 Invalid JSON and unknown rule names fail closed instead of silently falling back to weaker defaults.
 
-See [Policy reference](docs/POLICY.md), [Brownfield adoption](docs/ADOPTION.md), [Architecture](docs/ARCHITECTURE.md), and [Governance](docs/GOVERNANCE.md).
+See [Policy reference](docs/POLICY.md), [Brownfield adoption](docs/ADOPTION.md), [Architecture](docs/ARCHITECTURE.md), [Governance](docs/GOVERNANCE.md), [Evidence providers](docs/PROVIDERS.md), and [OpenSpec integration](docs/OPENSPEC.md).
 
 ## Scope
 
