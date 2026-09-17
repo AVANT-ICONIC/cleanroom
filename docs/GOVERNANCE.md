@@ -36,10 +36,29 @@ npx greenroom baseline --force --reason="short human-readable reason"
 ```
 
 5. Review `.greenroom/governance.jsonl` when present.
-6. Merge the governance PR.
-7. Remove `GREENROOM_ALLOW_GOVERNANCE_UPDATE`.
+6. Run the normal repository verification plus the Green Room governance gate.
+7. Merge the governance PR.
+8. Remove `GREENROOM_ALLOW_GOVERNANCE_UPDATE`.
 
 The variable is intentionally coarse and powerful. Do not leave it enabled.
+
+### Verifying Green Room itself
+
+Green Room's own repository has an explicit release verification mode:
+
+```bash
+npm run verify:governance
+```
+
+This does **not** skip tests, the packed-consumer smoke test, the benchmark, or the audit. It only grants the final `greenroom check` permission to accept an intentional governance change.
+
+`npm run verify` remains strict and must fail on unapproved governance changes.
+
+Automation may use the equivalent environment switch:
+
+```bash
+GREENROOM_VERIFY_GOVERNANCE=1 npm run verify
+```
 
 ## Waivers
 

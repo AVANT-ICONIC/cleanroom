@@ -24,3 +24,4 @@ Initial production release of Green Room.
 - transaction-style cleanup campaigns with approval, behavior-preservation checks, verification, and ratchet delta
 - generated-artifact registry and mess-budget enforcement
 - optional OpenSpec export for behavior-preserving cleanup campaigns
+- explicit cross-platform governance-release verification that preserves all tests and only authorizes the final governance gate

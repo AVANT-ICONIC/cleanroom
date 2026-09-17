@@ -12,6 +12,7 @@
     "smoke:consumer": "node ./scripts/smoke-consumer.mjs",
     "benchmark": "node ./scripts/benchmark.mjs",
     "verify": "node ./scripts/verify.mjs",
+    "verify:governance": "node ./scripts/verify.mjs --governance",
     "provider:integration": "node ./scripts/provider-integration.mjs"
   },
   "engines": {
