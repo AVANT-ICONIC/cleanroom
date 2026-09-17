@@ -8,6 +8,7 @@ import { loadGeneratedRegistry } from './analyzers/generated.mjs';
 import { violation } from './violations.mjs';
 import { waiversHash } from './waivers.mjs';
 import { RULES_TEXT, SKILL_TEXT, workflowText, extractManagedBlock } from './managed.mjs';
+import { classifyRegistryDiff } from './registry-diff.mjs';
 
 function deepStable(value) {
   if (Array.isArray(value)) return value.map(deepStable);
@@ -36,6 +37,45 @@ function compareTrackedFile(root, rel, base, rule, message, allowKind) {
   if (previous != null) previous = previous.trim();
   if (previous !== null && previous !== current) return violation(rule, [rel], message.replace('{base}', base), base);
   return null;
+}
+
+/**
+ * Read a tracked file as the base branch has it. Null means we could not, which
+ * is a different answer from "it is empty" and never reads as one.
+ */
+function textAtBase(root, rel, base) {
+  if (!base) return null;
+  let previous = git(root, ['show', `${base}:${rel}`]);
+  if (previous == null && !String(base).startsWith('origin/')) previous = git(root, ['show', `origin/${base}:${rel}`]);
+  return previous;
+}
+
+/**
+ * ADDING A RESPONSIBILITY IS THE WORK. CHANGING ONE IS A DECISION.
+ *
+ * The registry starts empty and is filled one responsibility at a time. Under a
+ * byte comparison every one of those pull requests is a governance event, and
+ * the only way through is GREENROOM_ALLOW_GOVERNANCE_UPDATE=1, which switches
+ * off the policy, waiver, registry and generated guards at once. A rule that
+ * makes a project disable four guards to do routine work has inverted itself.
+ *
+ * An addition is still judged: analyzeRegistry rejects a canonical path that is
+ * already claimed, one that does not exist, and a non-canonical peer left
+ * beside it. What it cannot judge is an entry that was already there, so a
+ * changed or removed entry stays blocked exactly as it was.
+ *
+ * Returns true only when we READ both sides and the edit was purely additive.
+ * No base ref, no git, an unreadable file on either side: false, and the caller
+ * blocks as it always did.
+ */
+function registryIsAdditiveOnly(root, config, base) {
+  const previous = textAtBase(root, config.registryFile, base);
+  if (previous == null) return false;
+  const currentPath = path.join(root, config.registryFile);
+  const current = fs.existsSync(currentPath) ? fs.readFileSync(currentPath, 'utf8') : null;
+  if (current == null) return false;
+  const { kind } = classifyRegistryDiff(previous, current);
+  return kind === 'additive' || kind === 'same';
 }
 
 function managedViolations(root, config) {
@@ -72,19 +112,22 @@ function managedViolations(root, config) {
 
 export function integrityViolations(root, config, baseline, { compareRef = null } = {}) {
   const out = [];
+  const base = compareRef || process.env.GITHUB_BASE_REF || process.env.GREENROOM_BASE_REF;
+  // Computed once and used for both registry checks, so the hash path and the
+  // branch path cannot disagree about the same edit.
+  const registryAdditive = governanceAllowed('registry') || registryIsAdditiveOnly(root, config, base);
+
   if (!governanceAllowed('policy') && baseline?.policyHash && baseline.policyHash !== policyHash(root)) out.push(violation('policy/config-changed', ['.greenroom.json'], 'Green Room policy changed after baseline. Policy changes require an explicit human governance update.', 'policy-hash'));
   if (!governanceAllowed('waiver') && baseline?.waiversHash && baseline.waiversHash !== waiversHash(root, config)) out.push(violation('policy/waivers-changed', [config.waiversFile], 'Green Room waivers changed after baseline. Waivers require an explicit human governance update.', 'waivers-hash'));
-  if (!governanceAllowed('registry') && baseline?.registryHash && baseline.registryHash !== registryHash(root, config)) out.push(violation('policy/registry-changed', [config.registryFile], 'Green Room canonical registry changed after baseline. Canonical architecture changes require an explicit human governance update.', 'registry-hash'));
+  if (!registryAdditive && baseline?.registryHash && baseline.registryHash !== registryHash(root, config)) out.push(violation('policy/registry-changed', [config.registryFile], 'Green Room canonical registry changed after baseline. Canonical architecture changes require an explicit human governance update.', 'registry-hash'));
   if (!governanceAllowed('generated') && baseline?.generatedHash && baseline.generatedHash !== generatedHash(root, config)) out.push(violation('policy/generated-registry-changed', [config.generatedFile], 'Green Room generated-artifact registry changed after baseline. Generated ownership changes require an explicit human governance update.', 'generated-hash')); 
-
-  const base = compareRef || process.env.GITHUB_BASE_REF || process.env.GREENROOM_BASE_REF;
   const baselineIssue = compareTrackedFile(root, config.baselineFile, base, 'policy/baseline-changed', `Baseline differs from {base}. Re-baselining inside routine work is blocked.`, 'baseline');
   if (baselineIssue) out.push(baselineIssue);
   const policyIssue = compareTrackedFile(root, '.greenroom.json', base, 'policy/config-changed', `Policy differs from {base}. Policy changes require an explicit human governance update.`, 'policy');
   if (policyIssue && !out.some((x) => x.id === policyIssue.id)) out.push(policyIssue);
   const waiverIssue = compareTrackedFile(root, config.waiversFile, base, 'policy/waivers-changed', `Waivers differ from {base}. Waiver changes require an explicit human governance update.`, 'waiver');
   if (waiverIssue && !out.some((x) => x.id === waiverIssue.id)) out.push(waiverIssue);
-  const registryIssue = compareTrackedFile(root, config.registryFile, base, 'policy/registry-changed', `Canonical registry differs from {base}. Architecture registry changes require an explicit human governance update.`, 'registry');
+  const registryIssue = registryAdditive ? null : compareTrackedFile(root, config.registryFile, base, 'policy/registry-changed', `Canonical registry differs from {base}. Architecture registry changes require an explicit human governance update.`, 'registry');
   if (registryIssue && !out.some((x) => x.id === registryIssue.id)) out.push(registryIssue);
   const generatedIssue = compareTrackedFile(root, config.generatedFile, base, 'policy/generated-registry-changed', `Generated-artifact registry differs from {base}. Ownership changes require an explicit human governance update.`, 'generated');
   if (generatedIssue && !out.some((x) => x.id === generatedIssue.id)) out.push(generatedIssue);
