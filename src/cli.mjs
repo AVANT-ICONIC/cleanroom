@@ -44,8 +44,31 @@ function positional(start = 1) {
 const root = path.resolve(option('root', process.cwd()));
 const json = flag('json');
 
+/**
+ * Write to stdout synchronously.
+ *
+ * `console.log` buffers, and every command here ends in `process.exit()`, which
+ * terminates before a full buffer drains. Piped output larger than the OS pipe
+ * buffer (64KiB on macOS) is then silently truncated mid-document — which is
+ * exactly what happens on a brownfield repo with hundreds of violations, and
+ * makes `--json` unparseable for any tool consuming it.
+ */
+function writeStdout(text) {
+  const buffer = Buffer.from(text, 'utf8');
+  let offset = 0;
+  while (offset < buffer.length) {
+    try {
+      offset += fs.writeSync(1, buffer, offset, buffer.length - offset);
+    } catch (err) {
+      if (err.code === 'EAGAIN') continue; // non-blocking pipe, retry
+      if (err.code === 'EPIPE') return; // reader went away
+      throw err;
+    }
+  }
+}
+
 function printJson(value) {
-  console.log(JSON.stringify(value, (_k,v) => v instanceof Map ? Object.fromEntries([...v].map(([k,s]) => [k, s instanceof Set ? [...s] : s])) : v instanceof Set ? [...v] : v, 2));
+  writeStdout(JSON.stringify(value, (_k,v) => v instanceof Map ? Object.fromEntries([...v].map(([k,s]) => [k, s instanceof Set ? [...s] : s])) : v instanceof Set ? [...v] : v, 2) + '\n');
 }
 function help() {
   console.log(`Green Room ${VERSION} — repository anti-entropy control plane
@@ -139,7 +162,7 @@ try {
   if (command === 'audit') {
     const applied = applyWaivers(result.violations, loadWaivers(root, config));
     if (json) printJson({ ...result, waivers: { active: applied.waived, expired: applied.expired } });
-    else console.log(auditText(result, { waived: applied.waived, expired: applied.expired }));
+    else writeStdout(auditText(result, { waived: applied.waived, expired: applied.expired }) + '\n');
     process.exit(0);
   }
 
@@ -162,7 +185,7 @@ try {
   if (command === 'check') {
     const evaluated = evaluateCheck(root, { explicitCompareRef: option('against') });
     if (evaluated.error) { console.error(evaluated.error); process.exit(evaluated.exitCode); }
-    if (json) printJson(evaluated); else console.log(evaluated.text);
+    if (json) printJson(evaluated); else writeStdout(evaluated.text + '\n');
     process.exit(evaluated.exitCode);
   }
 
