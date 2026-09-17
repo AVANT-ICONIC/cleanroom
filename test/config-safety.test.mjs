@@ -20,3 +20,13 @@ test('unknown rule keys are rejected to catch policy typos', () => {
   fs.writeFileSync(file, JSON.stringify(policy, null, 2));
   assert.throws(() => loadConfig(root), /Unknown rules key/);
 });
+
+
+test('unknown distribution keys are rejected instead of silently weakening CI', () => {
+  const root = tempRepo(); initialize(root, { existing: true });
+  const file = path.join(root, '.greenroom.json');
+  const policy = JSON.parse(fs.readFileSync(file, 'utf8'));
+  policy.distribution.checkComand = 'true';
+  fs.writeFileSync(file, JSON.stringify(policy, null, 2));
+  assert.throws(() => loadConfig(root), /Unknown distribution key/);
+});

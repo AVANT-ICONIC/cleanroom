@@ -114,6 +114,10 @@ Responsibilities can declare ownership, canonical files, entrypoints, tests/docs
 
 A repository with a deliberately custom CI workflow may set `managed.enforceWorkflowExact` to `false`; the workflow must still invoke `greenroom check`.
 
+## Distribution and CI commands
+
+`distribution.installCommand` is the command written into the generated Green Room workflow before the entropy gate runs. `distribution.checkCommand` is the actual gate command. Consumer repositories normally install the tested `stable` branch and run `npx greenroom check`. The Green Room repository itself overrides these to use its checked-out local source so private-repository authentication cannot break self-hosting. Both fields are validated and unknown distribution keys fail closed.
+
 ## Entropy weights
 
 `entropyWeights` only affects reporting/prioritization. It does not make a new violation acceptable. The ratchet compares exact violation identities.

@@ -1,1 +1,2 @@
 {"at":"2026-09-17T10:31:30.233Z","action":"initial-baseline","reason":"initial production baseline: complete policy, provider, OpenSpec, and canonicality controls","beforeEntropy":0,"afterEntropy":0}
+{"at":"2026-09-17T11:00:47.587Z","action":"rebaseline","reason":"self-host CI uses checked-out source instead of private branch installation","beforeEntropy":0,"afterEntropy":0}

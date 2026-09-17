@@ -146,7 +146,8 @@
     "CLAUDE.md"
   ],
   "distribution": {
-    "installCommand": "npm install --no-save github:AVANT-ICONIC/cleanroom#stable"
+    "installCommand": "npm ci --ignore-scripts",
+    "checkCommand": "node src/cli.mjs check"
   },
   "entropyWeights": {
     "architecture/cycle": 10,

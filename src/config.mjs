@@ -8,6 +8,7 @@ const SCRIPT_KEYS = new Set(Object.keys(DEFAULT_CONFIG.scripts));
 const MANAGED_KEYS = new Set(Object.keys(DEFAULT_CONFIG.managed));
 const ARCHITECTURE_KEYS = new Set(Object.keys(DEFAULT_CONFIG.architecture));
 const PROVIDER_KEYS = new Set(Object.keys(DEFAULT_CONFIG.providers));
+const DISTRIBUTION_KEYS = new Set(Object.keys(DEFAULT_CONFIG.distribution));
 
 function merge(base, override) {
   if (!override || typeof override !== 'object' || Array.isArray(override)) return override ?? base;
@@ -40,6 +41,8 @@ export function validateConfig(config) {
   assertKnown(config.managed, MANAGED_KEYS, 'managed');
   assertKnown(config.architecture, ARCHITECTURE_KEYS, 'architecture');
   assertKnown(config.providers, PROVIDER_KEYS, 'providers');
+  assertKnown(config.distribution, DISTRIBUTION_KEYS, 'distribution');
+  for (const key of DISTRIBUTION_KEYS) if (typeof config.distribution[key] !== 'string' || !config.distribution[key].trim()) throw new Error(`distribution.${key} must be a non-empty string`);
   for (const key of PROVIDER_KEYS) {
     const value = config.providers?.[key];
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`providers.${key} must be an object`);

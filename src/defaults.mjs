@@ -85,7 +85,8 @@ export const DEFAULT_CONFIG = {
   waiversFile: ".greenroom/waivers.json",
   generatedAgentFiles: ["AGENTS.md", "CLAUDE.md"],
   distribution: {
-    installCommand: "npm install --no-save github:AVANT-ICONIC/cleanroom#stable"
+    installCommand: "npm install --no-save github:AVANT-ICONIC/cleanroom#stable",
+    checkCommand: "npx greenroom check"
   },
   entropyWeights: {
     "architecture/cycle": 10,

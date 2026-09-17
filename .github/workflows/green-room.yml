@@ -20,16 +20,16 @@ jobs:
         with:
           node-version: 22
       - name: Install Green Room
-        run: npm install --no-save github:AVANT-ICONIC/cleanroom#stable
+        run: npm ci --ignore-scripts
       - name: Entropy gate (pull request)
         if: github.event_name == 'pull_request'
         env:
           GREENROOM_COMPARE_REF: origin/${{ github.base_ref }}
           GREENROOM_ALLOW_GOVERNANCE_UPDATE: ${{ vars.GREENROOM_ALLOW_GOVERNANCE_UPDATE }}
-        run: npx greenroom check
+        run: node src/cli.mjs check
       - name: Entropy gate (push)
         if: github.event_name == 'push'
         env:
           GREENROOM_COMPARE_REF: ${{ github.event.before }}
           GREENROOM_ALLOW_GOVERNANCE_UPDATE: ${{ vars.GREENROOM_ALLOW_GOVERNANCE_UPDATE }}
-        run: npx greenroom check
+        run: node src/cli.mjs check
