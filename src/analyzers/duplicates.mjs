@@ -17,6 +17,9 @@ function normalizeLine(line) {
     .trim();
 }
 
+/** A normalized line carrying something other than punctuation and blanks. */
+function isSubstantive(line) { return Boolean(line) && /\w/.test(line); }
+
 export function analyzeDuplicates(files, config) {
   const out = [];
   const codeFiles = files.filter((f) => !['.css', '.scss', '.sass', '.less'].includes(f.ext));
@@ -40,9 +43,24 @@ export function analyzeDuplicates(files, config) {
     for (const f of codeFiles) {
       if (matchesAnyPattern(f.rel, config.duplicateBlocks.ignorePatterns || [])) continue;
       const lines = readText(f.abs).split(/\r?\n/).map(normalizeLine);
+      const enough = Math.ceil(minLines * 0.75);
       for (let i = 0; i <= lines.length - minLines; i++) {
         const window = lines.slice(i, i + minLines);
-        if (window.filter(Boolean).length < Math.ceil(minLines * 0.75)) continue;
+        if (window.filter(Boolean).length < enough) continue;
+        // A CLOSING BRACE IS NOT CODE.
+        //
+        // The non-empty count treats `},`, `});` and `}` as content, so a
+        // window that is three lines of punctuation, a blank and one shared
+        // call reads as eight duplicated lines. Two functions ending next to
+        // the same one-line call is not a copy anyone can act on, and the
+        // advice this rule carries -- consolidate into one implementation --
+        // has already been taken when it fires there.
+        //
+        // MEASURED 2026-09-17 in apex-nexus: five browser instruments were
+        // consolidated onto one module, 36 duplicate blocks became 0, and this
+        // shape was what remained: `},` `});` `}` blank, then the three lines
+        // that call the shared module. There is nothing left to consolidate.
+        if (window.filter(isSubstantive).length < enough) continue;
         const block = window.join('\n');
         if (block.length < 180) continue;
         const h = sha(block);
