@@ -291,4 +291,9 @@ constraints > reminders
 ratchet > rewrite
 ```
 
-MIT licensed.
+Licensed under the **GNU Affero General Public License v3.0** — the same terms as
+[ShipGate](https://github.com/AVANT-ICONIC/shipgate-cli), which Green Room is
+designed to run alongside.
+
+Green Room exists to keep codebases open to inspection. The AGPL keeps Green Room
+itself open the same way, including when it is offered as a hosted service.
