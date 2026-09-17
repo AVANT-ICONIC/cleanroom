@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readJson, readText, isInsideAny, walk } from '../lib/fs.mjs';
+import { readJson, readText, isInsideAny, walk, codeWithoutComments } from '../lib/fs.mjs';
 import { violation } from '../violations.mjs';
 import { buildGraph } from './imports.mjs';
 
@@ -39,12 +39,23 @@ export function analyzeScripts(root, files, config) {
   const graph = buildGraph(root, files);
   const allowed = new Set(config.scripts.allowScriptImports || []);
   for (const f of scriptFiles) {
-    for (const dep of graph.get(f.rel) || []) {
-      if (scriptSet.has(dep) && !allowed.has(`${f.rel}->${dep}`)) out.push(violation('scripts/chain', [f.rel, dep], `Script imports another script: ${f.rel} -> ${dep}`, `${f.rel}->${dep}`));
+    // AN IMPORT IS A KNOWN EDGE, NOT A GUESS, SO IT IS REPORTED AS ONE.
+    //
+    // Both branches below fingerprint an edge the same way, so before this the
+    // text branch overwrote the import branch in the scanner's de-duplication
+    // and every genuine import was reported as "invokes another script path".
+    // MEASURED 2026-09-17 in apex-nexus: 78 chain violations, none of which
+    // said "imports", while 40 of them were plain `import ... from './x.mjs'`.
+    const imported = new Set([...(graph.get(f.rel) || [])].filter((dep) => scriptSet.has(dep)));
+    for (const dep of imported) {
+      if (!allowed.has(`${f.rel}->${dep}`)) out.push(violation('scripts/chain', [f.rel, dep], `Script imports another script: ${f.rel} -> ${dep}`, `${f.rel}->${dep}`));
     }
-    const text = readText(f.abs);
+    // Comments are stripped first: a path named in prose is a citation, and
+    // convicting a file for documenting where a number came from is noise that
+    // buries the real chains. See codeWithoutComments.
+    const text = codeWithoutComments(readText(f.abs));
     for (const target of scriptSet) {
-      if (target === f.rel) continue;
+      if (target === f.rel || imported.has(target)) continue;
       const bareTarget = normalizedScriptPath(target);
       const relativeFromScript = normalizedScriptPath(path.posix.relative(path.posix.dirname(f.rel), target));
       const variants = new Set([bareTarget, `./${bareTarget}`, relativeFromScript, `./${relativeFromScript}`]);

@@ -131,3 +131,76 @@ export function sourceFiles(root, config) {
 export function isInsideAny(rel, roots = []) {
   return roots.some((r) => rel === r || rel.startsWith(`${r}/`));
 }
+
+// A `/` opens a regular expression only where a value cannot already be sitting.
+// After an identifier, a number, `)`, `]` or `}` it is division.
+const VALUE_ENDS = /[\w$)\]}]/;
+
+/**
+ * The same source with every comment blanked out.
+ *
+ * WHY. A rule that searches a file for another file's path cannot tell an
+ * invocation from a citation, and a codebase that documents itself is full of
+ * citations: `// MEASURED 2026-09-17, each file run on its own by
+ * scripts/measure-file-cost.mjs`.
+ *
+ * MEASURED 2026-09-17 in apex-nexus: `scripts/chain` reported 78 violations. 37
+ * of them were a file name inside a comment -- a reference in prose, a "see
+ * also", a note recording where a number came from. Nearly half the rule's
+ * output convicted the repository of writing down what it did.
+ *
+ * Comment bodies become spaces rather than vanishing, so every line and column
+ * in the result still points at the same place in the original.
+ *
+ * Strings, template literals and regular expressions are tracked, because a
+ * `//` inside a URL and a `/*` inside a pattern are not comments. A `'` or `"`
+ * string cannot cross a line in JavaScript, so that state is dropped at each
+ * newline: a quote this misreads can cost one line and never the rest of a file.
+ */
+export function codeWithoutComments(text) {
+  if (typeof text !== 'string') return '';
+  const blank = (c) => (c === '\n' ? '\n' : ' ');
+  let out = '';
+  let quote = null;
+  let lastValue = '';
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    const next = text[i + 1];
+    if (quote) {
+      out += c;
+      if (c === '\\' && i + 1 < text.length) { out += next; i += 2; continue; }
+      if (c === quote) quote = null;
+      else if (c === '\n' && quote !== '`') quote = null;
+      i += 1;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') { quote = c; out += c; lastValue = c; i += 1; continue; }
+    if (c === '/' && next === '/') { while (i < text.length && text[i] !== '\n') { out += ' '; i += 1; } continue; }
+    if (c === '/' && next === '*') {
+      out += '  '; i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) { out += blank(text[i]); i += 1; }
+      if (i < text.length) { out += '  '; i += 2; }
+      continue;
+    }
+    if (c === '/' && !VALUE_ENDS.test(lastValue)) {
+      out += c; i += 1;
+      let inClass = false;
+      while (i < text.length && text[i] !== '\n') {
+        const r = text[i];
+        out += r;
+        i += 1;
+        if (r === '\\') { if (i < text.length) { out += text[i]; i += 1; } continue; }
+        if (r === '[') inClass = true;
+        else if (r === ']') inClass = false;
+        else if (r === '/' && !inClass) break;
+      }
+      lastValue = '/';
+      continue;
+    }
+    out += c;
+    if (!/\s/.test(c)) lastValue = c;
+    i += 1;
+  }
+  return out;
+}
