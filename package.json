@@ -1,6 +1,6 @@
 {
   "name": "@avant-iconic/cleanroom",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A deterministic anti-entropy guardrail for human and agent-generated codebases.",
   "type": "module",
   "bin": {
