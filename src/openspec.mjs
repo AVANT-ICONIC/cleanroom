@@ -15,9 +15,6 @@ function kebab(value) {
   return name.slice(0, 96).replace(/-+$/g, '');
 }
 
-function yamlString(value) {
-  return JSON.stringify(String(value));
-}
 
 function bullets(values, empty = '- None declared.') {
   const items = [...new Set((values || []).filter(Boolean))];
@@ -81,8 +78,11 @@ export function exportCampaignToOpenSpec(root, id, { name = '', validate = true 
 
   fs.mkdirSync(changeDir, { recursive: true });
   try {
-    const created = new Date().toISOString();
-    writeText(path.join(changeDir, '.openspec.yaml'), `schema: spec-driven\ncreated: ${yamlString(created)}\nskip_specs: true\n`);
+    // OpenSpec requires a plain YYYY-MM-DD date. A full ISO timestamp makes the
+    // metadata invalid, which silently disables the skip_specs marker and makes
+    // every generated change fail validation.
+    const created = new Date().toISOString().slice(0, 10);
+    writeText(path.join(changeDir, '.openspec.yaml'), `schema: spec-driven\ncreated: ${created}\nskip_specs: true\n`);
     writeText(path.join(changeDir, 'proposal.md'), renderProposal(found));
     writeText(path.join(changeDir, 'design.md'), renderDesign(found));
     writeText(path.join(changeDir, 'tasks.md'), renderTasks(found));
