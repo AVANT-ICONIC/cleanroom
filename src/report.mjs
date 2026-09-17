@@ -67,6 +67,47 @@ function fileSetKey(violation) {
   return `${violation.rule}|${violation.paths.join('|')}`;
 }
 
+// A RENAME IS NOT A NEW DUPLICATE.
+//
+// Matching by file set fixed the case where cleanup edits the lines AROUND a
+// duplicated block. It cannot survive the block's file being MOVED or RENAMED,
+// because the paths are the key: the old key keeps a slot nobody claims and is
+// counted resolved, and the new key has no slot and is counted fresh. The
+// repository blocks itself for tidying a folder, which is the same failure one
+// step further along.
+//
+// MEASURED 2026-09-17 in apex-nexus: moving ten behaviour modules into
+// packages/runtime/src/behavior/ and naming them after what they hold produced
+// "Resolved 6 / NEW 6" -- the same six blocks, byte for byte, in renamed files.
+//
+// A duplicated block is identified by its CONTENT, which `duplicates.mjs`
+// already writes as the first field of the detail, and by HOW MANY files carry
+// it. Paths are where it happens to live. So:
+//
+//   same content, same count, different paths  -> a rename. One slot, matched.
+//   same content, one more file                -> it spread. New key, blocks.
+//   different content, same two files          -> a second block. New key, blocks.
+//
+// Both properties #760 protected are kept, and renaming is no longer entropy.
+//
+// duplication/file stays keyed by file set: its detail is the constant
+// `exact-normalized-file` with no content hash, so there is nothing else to key
+// on. Changing that detail would change the id of every existing
+// duplication/file violation and invalidate every baseline in the wild. A
+// renamed duplicate FILE pair therefore still re-hashes, and that is a known
+// gap rather than a silent one.
+const BLOCK_CONTENT_HASH = /^([0-9a-f]{6,})\b/;
+
+function reHashKey(violation) {
+  if (violation.rule === 'duplication/block') {
+    const hash = BLOCK_CONTENT_HASH.exec(String(violation.detail ?? ''))?.[1];
+    // No hash means a baseline written before the detail carried one. Fall back
+    // rather than invent a key: an unreadable identity is not a match.
+    if (hash) return `${violation.rule}|content:${hash}|files:${violation.paths.length}`;
+  }
+  return fileSetKey(violation);
+}
+
 export function ratchet(currentViolations, referenceViolations) {
   const reference = referenceViolations || [];
   const allowedIds = new Set(reference.map((v) => v.id));
@@ -75,7 +116,7 @@ export function ratchet(currentViolations, referenceViolations) {
   const slots = new Map();
   for (const v of reference) {
     if (!RE_HASHABLE_RULES.has(v.rule)) continue;
-    slots.set(fileSetKey(v), (slots.get(fileSetKey(v)) || 0) + 1);
+    slots.set(reHashKey(v), (slots.get(reHashKey(v)) || 0) + 1);
   }
 
   // Exact matches first, so a re-hashed block can never consume the slot that
@@ -84,7 +125,7 @@ export function ratchet(currentViolations, referenceViolations) {
   for (const v of currentViolations) {
     if (allowedIds.has(v.id)) {
       if (RE_HASHABLE_RULES.has(v.rule)) {
-        const key = fileSetKey(v);
+        const key = reHashKey(v);
         slots.set(key, Math.max(0, (slots.get(key) || 0) - 1));
       }
       continue;
@@ -95,7 +136,7 @@ export function ratchet(currentViolations, referenceViolations) {
   const fresh = [];
   const rehashed = [];
   for (const v of unmatched) {
-    const key = fileSetKey(v);
+    const key = reHashKey(v);
     const remaining = RE_HASHABLE_RULES.has(v.rule) ? (slots.get(key) || 0) : 0;
     if (remaining > 0) {
       slots.set(key, remaining - 1);
@@ -109,12 +150,12 @@ export function ratchet(currentViolations, referenceViolations) {
   // present, just under a different id. Counting it as resolved would claim
   // credit for cleanup that did not happen.
   const absorbed = new Map();
-  for (const v of rehashed) absorbed.set(fileSetKey(v), (absorbed.get(fileSetKey(v)) || 0) + 1);
+  for (const v of rehashed) absorbed.set(reHashKey(v), (absorbed.get(reHashKey(v)) || 0) + 1);
 
   const resolved = [];
   for (const v of reference) {
     if (currentIds.has(v.id)) continue;
-    const key = fileSetKey(v);
+    const key = reHashKey(v);
     if (RE_HASHABLE_RULES.has(v.rule) && (absorbed.get(key) || 0) > 0) {
       absorbed.set(key, absorbed.get(key) - 1);
       continue;
