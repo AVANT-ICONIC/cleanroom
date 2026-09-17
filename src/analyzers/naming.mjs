@@ -6,6 +6,26 @@ import { violation } from '../violations.mjs';
 const MARKER = /(?:^|[-_.])(fix(?:ed)?|final|new|old|backup|copy|temp|tmp|v\d+)(?=[-_.]|$)/gi;
 const TRAILING_MARKER = /[-_.](fix(?:ed)?|final|new|old|backup|copy|temp|tmp|v\d+)$/i;
 
+// A SERIAL NUMBER IS NOT A NAME.
+//
+// `agentube-1.mjs`, `hive-3.mjs`, `game-foundry-5.mjs`: a shared prefix and an
+// index. The digit says which piece of an extraction this was, which is a fact
+// about how the code arrived and not about what it does.
+//
+// MEASURED 2026-09-17 in apex-nexus: 53 such files, 16% of a flat source
+// directory, and 47 of the 53 carried no header comment either. Every one was
+// imported by exactly one well-named module under a proper symbol name --
+// `dunetrace-1.mjs` was always `ToolOscillationAnalyzer` inside. The name of a
+// file is the cheapest documentation there is and these spent it on nothing.
+//
+// A LONE trailing number is not enough evidence. `sha-256`, `base-64`, `h-264`
+// and `utf-8` are names, and a rule that convicts them is the word-search
+// mistake one more time. What makes an index an index is a SIBLING carrying the
+// same prefix and a different number. That is the same counterpart test the
+// leading-marker rule uses, and on the apex tree it catches 40 of the 46
+// without a single false positive.
+const TRAILING_INDEX = /^(.+)[-_.](\d{1,3})$/;
+
 /** The basename without its last extension: `vault-backup.test.mjs` -> `vault-backup.test`. */
 function stemOf(base) {
   const ext = path.extname(base);
@@ -75,6 +95,28 @@ export function analyzeNaming(files, config) {
     for (const candidate of namesWithoutAMarker(stem)) {
       const hit = siblings.get(candidate);
       if (hit && hit !== f.rel) { counterpart = hit; break; }
+    }
+
+    // A numbered sibling is what turns a trailing digit into a serial index.
+    const indexed = TRAILING_INDEX.exec(stem);
+    let numberedSibling = null;
+    if (indexed) {
+      const [, prefix, digits] = indexed;
+      for (const [otherStem, otherRel] of siblings) {
+        if (otherRel === f.rel) continue;
+        const other = TRAILING_INDEX.exec(otherStem);
+        if (other && other[1] === prefix && other[2] !== digits) { numberedSibling = otherRel; break; }
+      }
+    }
+
+    if (numberedSibling) {
+      out.push(violation(
+        'naming/suspicious',
+        [f.rel, numberedSibling],
+        `Serial-numbered filename: ${f.rel} sits beside ${numberedSibling}. The digit is an index, not a name.`,
+        base
+      ));
+      continue;
     }
 
     if (!TRAILING_MARKER.test(stem) && !counterpart) continue;
