@@ -46,16 +46,93 @@ export function auditText(result, { waived = [], expired = [] } = {}) {
   return lines.join('\n');
 }
 
+// A duplication violation's id is a hash of the block's CONTENT. Edit a line
+// anywhere near duplication that is already baselined and the id changes, so
+// the ratchet reports accepted debt as brand new entropy.
+//
+// MEASURED 2026-09-17 on a 1810-file repository: cleanup took it from 206
+// violations to 130, and the gate then blocked every pull request with 11 "new"
+// violations. All 11 were file pairs the baseline already contained, re-hashed
+// because the cleanup had edited the surrounding lines. A repository is not
+// supposed to block itself for getting cleaner.
+//
+// So duplication is matched by FILE SET as well as by id, and by count: the
+// baseline grants each file set as many slots as it recorded, an exact id match
+// or a re-hashed block consumes one, and anything beyond that is still new.
+// Adding a SECOND duplicated block between the same two files therefore still
+// blocks, which is the property that matters.
+const RE_HASHABLE_RULES = new Set(['duplication/block', 'duplication/file']);
+
+function fileSetKey(violation) {
+  return `${violation.rule}|${violation.paths.join('|')}`;
+}
+
+export function ratchet(currentViolations, referenceViolations) {
+  const reference = referenceViolations || [];
+  const allowedIds = new Set(reference.map((v) => v.id));
+  const currentIds = new Set(currentViolations.map((v) => v.id));
+
+  const slots = new Map();
+  for (const v of reference) {
+    if (!RE_HASHABLE_RULES.has(v.rule)) continue;
+    slots.set(fileSetKey(v), (slots.get(fileSetKey(v)) || 0) + 1);
+  }
+
+  // Exact matches first, so a re-hashed block can never consume the slot that
+  // an unchanged one still needs.
+  const unmatched = [];
+  for (const v of currentViolations) {
+    if (allowedIds.has(v.id)) {
+      if (RE_HASHABLE_RULES.has(v.rule)) {
+        const key = fileSetKey(v);
+        slots.set(key, Math.max(0, (slots.get(key) || 0) - 1));
+      }
+      continue;
+    }
+    unmatched.push(v);
+  }
+
+  const fresh = [];
+  const rehashed = [];
+  for (const v of unmatched) {
+    const key = fileSetKey(v);
+    const remaining = RE_HASHABLE_RULES.has(v.rule) ? (slots.get(key) || 0) : 0;
+    if (remaining > 0) {
+      slots.set(key, remaining - 1);
+      rehashed.push(v);
+      continue;
+    }
+    fresh.push(v);
+  }
+
+  // A baselined violation whose slot was taken by a re-hashed block is still
+  // present, just under a different id. Counting it as resolved would claim
+  // credit for cleanup that did not happen.
+  const absorbed = new Map();
+  for (const v of rehashed) absorbed.set(fileSetKey(v), (absorbed.get(fileSetKey(v)) || 0) + 1);
+
+  const resolved = [];
+  for (const v of reference) {
+    if (currentIds.has(v.id)) continue;
+    const key = fileSetKey(v);
+    if (RE_HASHABLE_RULES.has(v.rule) && (absorbed.get(key) || 0) > 0) {
+      absorbed.set(key, absorbed.get(key) - 1);
+      continue;
+    }
+    resolved.push(v);
+  }
+
+  return { fresh, resolved, rehashed };
+}
+
 export function checkText(current, reference, { referenceLabel = 'baseline', waived = [] } = {}) {
-  const allowed = new Set((reference?.violations || []).map((v) => v.id));
-  const currentIds = new Set(current.violations.map((x) => x.id));
-  const fresh = current.violations.filter((v) => !allowed.has(v.id));
-  const resolved = (reference?.violations || []).filter((v) => !currentIds.has(v.id));
+  const { fresh, resolved, rehashed } = ratchet(current.violations, reference?.violations);
   const lines = ['GREEN ROOM CHECK', '='.repeat(64)];
   lines.push(`Reference            : ${referenceLabel}`);
   lines.push(`Reference violations : ${reference?.violations?.length ?? 0}`);
   lines.push(`Current violations   : ${current.violations.length}`);
   lines.push(`Resolved             : ${resolved.length}`);
+  if (rehashed.length) lines.push(`Re-hashed (same files): ${rehashed.length}`);
   lines.push(`Waived               : ${waived.length}`);
   lines.push(`NEW violations       : ${fresh.length}`);
   lines.push('');
@@ -64,5 +141,5 @@ export function checkText(current, reference, { referenceLabel = 'baseline', wai
     lines.push('✗ BLOCKED — new entropy introduced:');
     for (const v of fresh) lines.push(`  - ${v.rule}: ${v.message} [${v.id}]`);
   }
-  return { text: lines.join('\n'), fresh, resolved };
+  return { text: lines.join('\n'), fresh, resolved, rehashed };
 }
