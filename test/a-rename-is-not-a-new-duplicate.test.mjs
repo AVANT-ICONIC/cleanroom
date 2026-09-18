@@ -102,3 +102,84 @@ test('a rule that is not duplication is never re-hashed by any key', () => {
   const { fresh } = ratchet([cycle('b', OLD)], [cycle('a', OLD)]);
   assert.equal(fresh.length, 1, 'only duplication is forgiving; everything else is exact');
 });
+
+// A SHRINK IS NOT A NEW DUPLICATE EITHER.
+//
+// The same reasoning one step further. Taking a file OUT of a cluster changes
+// the count, and the count is part of the key, so the old entry reads as
+// resolved and the smaller one reads as fresh. The repository blocks itself for
+// removing a duplicate, which is the single move this rule exists to ask for.
+//
+// MEASURED 2026-09-18 in apex-nexus: PR #840 routed council.js through a shared
+// fetch helper and took it out of a six-file block. Violations fell 91 -> 90
+// and the check said "Resolved 2 / NEW 1".
+
+const SIX = [
+  'apps/ui/runtime/council.js',
+  'apps/ui/runtime/lib/complimentary-reviewers.js',
+  'apps/ui/runtime/lib/retained-widgets.js',
+  'apps/ui/runtime/lib/space-widgets.js',
+  'apps/ui/runtime/lib/whiteboard.js',
+  'apps/ui/runtime/lib/work-requests.js',
+];
+const FIVE = SIX.slice(1);
+
+test('taking one file out of a cluster is cleanup, not new entropy', () => {
+  const reference = [block('aaa', SIX, 'd307a8ceee65')];
+  const current = [block('bbb', FIVE, 'd307a8ceee65')];
+  const { fresh, resolved, rehashed } = ratchet(current, reference);
+  assert.deepEqual(fresh, [], 'removing a duplicate must not block the PR that removed it');
+  assert.equal(rehashed.length, 1);
+  assert.deepEqual(resolved, [],
+    'and the block is still in five files, so nothing may be claimed as resolved');
+});
+
+test('THE INVERTED CONTROL: the spread direction still blocks', () => {
+  // Without this the change above would read as "stopped checking the count".
+  const reference = [block('aaa', FIVE, 'd307a8ceee65')];
+  const current = [block('bbb', SIX, 'd307a8ceee65')];
+  const { fresh } = ratchet(current, reference);
+  assert.equal(fresh.length, 1, 'a block reaching one more file is still new');
+});
+
+test('an unchanged cluster keeps its own slot, so a shrink cannot steal it', () => {
+  // Two reference clusters of the same content, six files and five. The five
+  // stays exactly as it was; a NEW five-file cluster of that content must not
+  // take the five-file slot and must not take the six-file one either, because
+  // the five-file slot is already spoken for and the six is still present.
+  const OTHER_FIVE = ['a.js', 'b.js', 'c.js', 'd.js', 'e.js'];
+  const reference = [block('aaa', SIX, 'd307a8ceee65'), block('bbb', OTHER_FIVE, 'd307a8ceee65')];
+  const current = [
+    block('aaa', SIX, 'd307a8ceee65'),
+    block('bbb', OTHER_FIVE, 'd307a8ceee65'),
+    block('ccc', FIVE, 'd307a8ceee65'),
+  ];
+  const { fresh } = ratchet(current, reference);
+  assert.equal(fresh.length, 1, 'a third cluster of the same block is still new');
+  assert.equal(fresh[0].id, 'ccc');
+});
+
+test('a shrink takes the smallest larger slot, not the largest', () => {
+  const TEN = Array.from({ length: 10 }, (_, i) => `t${i}.js`);
+  const reference = [block('big', TEN, 'd307a8ceee65'), block('aaa', SIX, 'd307a8ceee65')];
+  const current = [block('big', TEN, 'd307a8ceee65'), block('bbb', FIVE, 'd307a8ceee65')];
+  const { fresh, resolved } = ratchet(current, reference);
+  assert.deepEqual(fresh, [], 'the six-file cluster shrank to five');
+  assert.deepEqual(resolved, [],
+    'the ten-file cluster is untouched and the six-file one is still present in five');
+});
+
+test('a shrink with no content hash in the detail is not guessed at', () => {
+  // A baseline written before the detail carried a hash. An unreadable
+  // identity is not a match, and inventing one would wave through a genuinely
+  // new cluster.
+  const noHash = (id, paths) => ({
+    id,
+    rule: 'duplication/block',
+    paths: [...paths].sort(),
+    message: `Duplicated code block across ${paths.length} files`,
+    detail: paths.map((p) => `${p}:40`).join(', '),
+  });
+  const { fresh } = ratchet([noHash('bbb', FIVE)], [noHash('aaa', SIX)]);
+  assert.equal(fresh.length, 1, 'without a content hash there is nothing to match on');
+});

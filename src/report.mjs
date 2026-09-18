@@ -86,7 +86,24 @@ function fileSetKey(violation) {
 //
 //   same content, same count, different paths  -> a rename. One slot, matched.
 //   same content, one more file                -> it spread. New key, blocks.
+//   same content, one FEWER file               -> it shrank. One slot, matched.
 //   different content, same two files          -> a second block. New key, blocks.
+//
+// The shrink case was the gap. A consolidation that takes one file out of a
+// cluster of six leaves the same block in five, which is a different count and
+// therefore a different key: the six-file entry reads as resolved and the
+// five-file entry reads as NEW. The repository blocks itself for removing a
+// duplicate, which is the one move the rule exists to encourage.
+//
+// MEASURED 2026-09-18 in apex-nexus: PR #840 routed council.js through a
+// shared fetch helper, taking it out of a six-file block shared with
+// complimentary-reviewers, retained-widgets, space-widgets, whiteboard and
+// work-requests. Total violations fell 91 -> 90 and the check reported
+// "Resolved 2 / NEW 1", blocking the PR that did the cleanup.
+//
+// A shrink consumes the larger slot rather than counting as resolved, for the
+// same reason a rename does: the duplication is still there, in fewer files.
+// Claiming it resolved would take credit for work that has not finished.
 //
 // Both properties #760 protected are kept, and renaming is no longer entropy.
 //
@@ -106,6 +123,41 @@ function reHashKey(violation) {
     if (hash) return `${violation.rule}|content:${hash}|files:${violation.paths.length}`;
   }
   return fileSetKey(violation);
+}
+
+// The reference slot for the SAME block carried by MORE files. The smallest
+// such count is taken, so a cluster that shrank from six to five consumes the
+// six-file slot and not a ten-file one that is still its own finding.
+function smallestLargerSlot(slots, violation) {
+  const hash = BLOCK_CONTENT_HASH.exec(String(violation.detail ?? ''))?.[1];
+  if (!hash) return null;
+  const prefix = `${violation.rule}|content:${hash}|files:`;
+  let best = null;
+  let bestCount = Infinity;
+  for (const [key, remaining] of slots) {
+    if (remaining <= 0 || !key.startsWith(prefix)) continue;
+    const count = Number(key.slice(prefix.length));
+    if (!Number.isFinite(count) || count <= violation.paths.length) continue;
+    if (count < bestCount) { bestCount = count; best = key; }
+  }
+  return best;
+}
+
+// The same choice made against the reference list rather than the live slot
+// map, so the absorbed tally lands on the entry the shrink actually consumed.
+function smallestLargerSlotKeyFor(reference, violation) {
+  const hash = BLOCK_CONTENT_HASH.exec(String(violation.detail ?? ''))?.[1];
+  if (!hash) return null;
+  let best = null;
+  let bestCount = Infinity;
+  for (const r of reference) {
+    if (r.rule !== 'duplication/block') continue;
+    const rHash = BLOCK_CONTENT_HASH.exec(String(r.detail ?? ''))?.[1];
+    if (rHash !== hash) continue;
+    if (r.paths.length <= violation.paths.length) continue;
+    if (r.paths.length < bestCount) { bestCount = r.paths.length; best = reHashKey(r); }
+  }
+  return best;
 }
 
 export function ratchet(currentViolations, referenceViolations) {
@@ -135,6 +187,7 @@ export function ratchet(currentViolations, referenceViolations) {
 
   const fresh = [];
   const rehashed = [];
+  const shrunk = [];
   for (const v of unmatched) {
     const key = reHashKey(v);
     const remaining = RE_HASHABLE_RULES.has(v.rule) ? (slots.get(key) || 0) : 0;
@@ -143,6 +196,17 @@ export function ratchet(currentViolations, referenceViolations) {
       rehashed.push(v);
       continue;
     }
+    // An exact count match is preferred above, so a shrink can never take the
+    // slot an unchanged cluster still needs. Only what is left over gets here.
+    if (v.rule === 'duplication/block') {
+      const slot = smallestLargerSlot(slots, v);
+      if (slot) {
+        slots.set(slot, slots.get(slot) - 1);
+        rehashed.push(v);
+        shrunk.push(v);
+        continue;
+      }
+    }
     fresh.push(v);
   }
 
@@ -150,7 +214,16 @@ export function ratchet(currentViolations, referenceViolations) {
   // present, just under a different id. Counting it as resolved would claim
   // credit for cleanup that did not happen.
   const absorbed = new Map();
-  for (const v of rehashed) absorbed.set(reHashKey(v), (absorbed.get(reHashKey(v)) || 0) + 1);
+  const shrunkSet = new Set(shrunk);
+  for (const v of rehashed) {
+    // A shrunk cluster consumed a LARGER reference slot, so it must be counted
+    // against that slot's key. Counting it against its own would leave the
+    // six-file reference entry looking resolved while the block is still there.
+    const key = shrunkSet.has(v)
+      ? (smallestLargerSlotKeyFor(reference, v) ?? reHashKey(v))
+      : reHashKey(v);
+    absorbed.set(key, (absorbed.get(key) || 0) + 1);
+  }
 
   const resolved = [];
   for (const v of reference) {
