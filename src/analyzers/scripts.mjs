@@ -4,6 +4,33 @@ import { violation } from '../violations.mjs';
 import { buildGraph } from './imports.mjs';
 
 function normalizedScriptPath(value) { return value.replace(/^\.\//, '').replaceAll('\\', '/'); }
+
+// A PATH ENDS WHERE A PATH ENDS.
+//
+// The text branch below asks whether a script's code names another script's
+// path. Two scripts in the same directory make that path a bare file name, and
+// a plain substring test then matches any longer path ending in the same
+// characters: `packages/runtime/src/worker.mjs` answers a search for
+// `worker.mjs`. MEASURED 2026-09-18 in apex-nexus: extracting a tools/ script
+// into packages/ was reported as a chain to the very file the extraction had
+// just stopped chaining to, and the work had to rename the new module to land.
+// Renaming code to satisfy a detector is the opposite of what this rule is for.
+//
+// So a mention counts only where the character before it cannot continue a
+// path. Nothing here narrows what the rule catches: every variant the caller
+// builds is still searched, and a sibling named bare, as ./name, or by its
+// full path from the root all still match.
+const PATH_CHARACTER = /[A-Za-z0-9_.\-/]/;
+function mentionsPath(text, candidate) {
+  if (!candidate) return false;
+  let from = 0;
+  for (;;) {
+    const at = text.indexOf(candidate, from);
+    if (at === -1) return false;
+    if (at === 0 || !PATH_CHARACTER.test(text[at - 1])) return true;
+    from = at + 1;
+  }
+}
 function lifecycleAllowed(name, ref, config) {
   if (!config.scripts.allowLifecycleHooks) return false;
   return name === `pre${ref}` || name === `post${ref}`;
@@ -59,7 +86,7 @@ export function analyzeScripts(root, files, config) {
       const bareTarget = normalizedScriptPath(target);
       const relativeFromScript = normalizedScriptPath(path.posix.relative(path.posix.dirname(f.rel), target));
       const variants = new Set([bareTarget, `./${bareTarget}`, relativeFromScript, `./${relativeFromScript}`]);
-      if ([...variants].some((candidate) => candidate && text.includes(candidate)) && !allowed.has(`${f.rel}->${target}`)) out.push(violation('scripts/chain', [f.rel, target], `Script invokes another script path: ${f.rel} -> ${target}`, `${f.rel}->${target}`));
+      if ([...variants].some((candidate) => mentionsPath(text, candidate)) && !allowed.has(`${f.rel}->${target}`)) out.push(violation('scripts/chain', [f.rel, target], `Script invokes another script path: ${f.rel} -> ${target}`, `${f.rel}->${target}`));
     }
   }
   out.push(...packageScriptViolations(root, config));
