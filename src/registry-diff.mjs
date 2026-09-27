@@ -25,8 +25,20 @@
 // cannot point at nothing. Those checks say nothing about an entry that was
 // ALREADY there, so editing or deleting one stays exactly as blocked as before.
 //
+// RETIRING IS NOT REWRITING EITHER (2026-09-27). Deleting a dead module means
+// deleting its entry too, or the registry points at nothing. A removed entry is
+// a retirement when EVERY canonical path it claimed is gone from the tree and
+// tombstoned by the project: the architecture already changed, in the same
+// diff, and the project recorded why. The caller supplies that judgement as
+// `isRetired(path)`; this module never touches the disk. A removed entry whose
+// canonical is still on disk, or was never tombstoned, or that claimed no path
+// at all, stays a mutation. MEASURED in apex-nexus #1778: six dead modules
+// deleted, six entries retired, `policy/registry-changed` raised twice.
+//
 // This never opens a hole in the other three governance guards. It classifies
 // one file, and only the registry.
+
+import { canonicalPathsForEntry } from './analyzers/registry.mjs';
 
 function parse(text) {
   if (typeof text !== 'string' || text.trim() === '') return null;
@@ -64,29 +76,37 @@ function scalarKeys(registry) {
  *   'same'       identical, nothing to judge
  *   'additive'   entries were added; every entry that already existed is byte
  *                for byte what it was, and no other field moved
- *   'mutating'   an existing entry changed or was removed, or a top-level field
- *                outside the two entry bags moved
+ *   'retiring'   as 'additive', and entries were removed whose every canonical
+ *                path `isRetired` vouches for (listed in `retired`)
+ *   'mutating'   an existing entry changed, an entry was removed that is not a
+ *                retirement, or a top-level field outside the two entry bags
+ *                moved
  *   'unreadable' either side is missing or is not a registry object
  *
  * 'unreadable' is its own answer and never collapses into 'additive'. A file we
  * cannot read is not a file we have judged, and the caller fails closed on it.
  */
-export function classifyRegistryDiff(previousText, currentText) {
+export function classifyRegistryDiff(previousText, currentText, { isRetired = () => false } = {}) {
   const previous = parse(previousText);
   const current = parse(currentText);
   if (!previous || !current) {
-    return { kind: 'unreadable', added: [], changed: [], removed: [] };
+    return { kind: 'unreadable', added: [], changed: [], removed: [], retired: [] };
   }
 
   const added = [];
   const changed = [];
   const removed = [];
+  const retired = [];
+  const retires = (key, value) => {
+    const paths = canonicalPathsForEntry(key, value);
+    return paths.length > 0 && paths.every((p) => isRetired(p));
+  };
 
   for (const key of ['responsibilities', 'components']) {
     const before = section(previous, key);
     const after = section(current, key);
     for (const name of Object.keys(before)) {
-      if (!(name in after)) removed.push(`${key}.${name}`);
+      if (!(name in after)) (retires(key, before[name]) ? retired : removed).push(`${key}.${name}`);
       else if (!same(before[name], after[name])) changed.push(`${key}.${name}`);
     }
     for (const name of Object.keys(after)) {
@@ -102,7 +122,9 @@ export function classifyRegistryDiff(previousText, currentText) {
     || beforeKeys.some((k) => !afterKeys.includes(k) || !same(previous[k], current[k]));
   if (scalarMoved) changed.push('(top-level)');
 
-  if (changed.length || removed.length) return { kind: 'mutating', added, changed, removed };
-  if (added.length) return { kind: 'additive', added, changed, removed };
-  return { kind: 'same', added, changed, removed };
+  const result = { added, changed, removed, retired };
+  if (changed.length || removed.length) return { kind: 'mutating', ...result };
+  if (retired.length) return { kind: 'retiring', ...result };
+  if (added.length) return { kind: 'additive', ...result };
+  return { kind: 'same', ...result };
 }

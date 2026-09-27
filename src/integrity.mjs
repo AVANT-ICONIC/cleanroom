@@ -9,6 +9,7 @@ import { violation } from './violations.mjs';
 import { waiversHash } from './waivers.mjs';
 import { RULES_TEXT, SKILL_TEXT, workflowText, extractManagedBlock } from './managed.mjs';
 import { classifyRegistryDiff } from './registry-diff.mjs';
+import { tombstonedPaths } from './tombstones.mjs';
 
 function deepStable(value) {
   if (Array.isArray(value)) return value.map(deepStable);
@@ -62,20 +63,27 @@ function textAtBase(root, rel, base) {
  * An addition is still judged: analyzeRegistry rejects a canonical path that is
  * already claimed, one that does not exist, and a non-canonical peer left
  * beside it. What it cannot judge is an entry that was already there, so a
- * changed or removed entry stays blocked exactly as it was.
+ * changed entry stays blocked exactly as it was.
  *
- * Returns true only when we READ both sides and the edit was purely additive.
- * No base ref, no git, an unreadable file on either side: false, and the caller
- * blocks as it always did.
+ * A REMOVED entry is a retirement, not a rewrite, when every canonical path it
+ * claimed is absent from the tree AND tombstoned (src/tombstones.mjs): the
+ * module is gone and the project recorded that on purpose. Removing an entry
+ * whose canonical is still on disk is still an architecture change.
+ *
+ * Returns true only when we READ both sides and the edit only declared or
+ * retired. No base ref, no git, an unreadable file on either side: false, and
+ * the caller blocks as it always did.
  */
-function registryIsAdditiveOnly(root, config, base) {
+function registryEditIsRoutine(root, config, base) {
   const previous = textAtBase(root, config.registryFile, base);
   if (previous == null) return false;
   const currentPath = path.join(root, config.registryFile);
   const current = fs.existsSync(currentPath) ? fs.readFileSync(currentPath, 'utf8') : null;
   if (current == null) return false;
-  const { kind } = classifyRegistryDiff(previous, current);
-  return kind === 'additive' || kind === 'same';
+  const tombstoned = tombstonedPaths(root, config);
+  const isRetired = (rel) => tombstoned.has(rel) && !fs.existsSync(path.join(root, rel));
+  const { kind } = classifyRegistryDiff(previous, current, { isRetired });
+  return kind === 'additive' || kind === 'retiring' || kind === 'same';
 }
 
 function managedViolations(root, config) {
@@ -115,11 +123,11 @@ export function integrityViolations(root, config, baseline, { compareRef = null 
   const base = compareRef || process.env.GITHUB_BASE_REF || process.env.GREENROOM_BASE_REF;
   // Computed once and used for both registry checks, so the hash path and the
   // branch path cannot disagree about the same edit.
-  const registryAdditive = governanceAllowed('registry') || registryIsAdditiveOnly(root, config, base);
+  const registryRoutine = governanceAllowed('registry') || registryEditIsRoutine(root, config, base);
 
   if (!governanceAllowed('policy') && baseline?.policyHash && baseline.policyHash !== policyHash(root)) out.push(violation('policy/config-changed', ['.greenroom.json'], 'Green Room policy changed after baseline. Policy changes require an explicit human governance update.', 'policy-hash'));
   if (!governanceAllowed('waiver') && baseline?.waiversHash && baseline.waiversHash !== waiversHash(root, config)) out.push(violation('policy/waivers-changed', [config.waiversFile], 'Green Room waivers changed after baseline. Waivers require an explicit human governance update.', 'waivers-hash'));
-  if (!registryAdditive && baseline?.registryHash && baseline.registryHash !== registryHash(root, config)) out.push(violation('policy/registry-changed', [config.registryFile], 'Green Room canonical registry changed after baseline. Canonical architecture changes require an explicit human governance update.', 'registry-hash'));
+  if (!registryRoutine && baseline?.registryHash && baseline.registryHash !== registryHash(root, config)) out.push(violation('policy/registry-changed', [config.registryFile], 'Green Room canonical registry changed after baseline. Canonical architecture changes require an explicit human governance update.', 'registry-hash'));
   if (!governanceAllowed('generated') && baseline?.generatedHash && baseline.generatedHash !== generatedHash(root, config)) out.push(violation('policy/generated-registry-changed', [config.generatedFile], 'Green Room generated-artifact registry changed after baseline. Generated ownership changes require an explicit human governance update.', 'generated-hash')); 
   const baselineIssue = compareTrackedFile(root, config.baselineFile, base, 'policy/baseline-changed', `Baseline differs from {base}. Re-baselining inside routine work is blocked.`, 'baseline');
   if (baselineIssue) out.push(baselineIssue);
@@ -127,7 +135,7 @@ export function integrityViolations(root, config, baseline, { compareRef = null 
   if (policyIssue && !out.some((x) => x.id === policyIssue.id)) out.push(policyIssue);
   const waiverIssue = compareTrackedFile(root, config.waiversFile, base, 'policy/waivers-changed', `Waivers differ from {base}. Waiver changes require an explicit human governance update.`, 'waiver');
   if (waiverIssue && !out.some((x) => x.id === waiverIssue.id)) out.push(waiverIssue);
-  const registryIssue = registryAdditive ? null : compareTrackedFile(root, config.registryFile, base, 'policy/registry-changed', `Canonical registry differs from {base}. Architecture registry changes require an explicit human governance update.`, 'registry');
+  const registryIssue = registryRoutine ? null : compareTrackedFile(root, config.registryFile, base, 'policy/registry-changed', `Canonical registry differs from {base}. Architecture registry changes require an explicit human governance update.`, 'registry');
   if (registryIssue && !out.some((x) => x.id === registryIssue.id)) out.push(registryIssue);
   const generatedIssue = compareTrackedFile(root, config.generatedFile, base, 'policy/generated-registry-changed', `Generated-artifact registry differs from {base}. Ownership changes require an explicit human governance update.`, 'generated');
   if (generatedIssue && !out.some((x) => x.id === generatedIssue.id)) out.push(generatedIssue);

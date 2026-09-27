@@ -15,6 +15,12 @@ export function canonicalPathsForResponsibility(value) {
   return typeof value.canonical === 'string' ? [value.canonical] : [];
 }
 
+/** The canonical paths a registry entry claims, for either bag. */
+export function canonicalPathsForEntry(kind, value) {
+  if (kind === 'responsibilities') return canonicalPathsForResponsibility(value);
+  return [typeof value === 'string' ? value : value?.canonical].filter(Boolean);
+}
+
 export function normalizeResponsibility(name, value) {
   const canonical = canonicalPathsForResponsibility(value);
   const obj = typeof value === 'object' && value ? value : {};
@@ -70,7 +76,7 @@ export function analyzeRegistry(root, files, config) {
   const findings = [];
   for (const [kind, entries] of Object.entries({ responsibilities: registry.responsibilities || {}, components: registry.components || {} })) {
     for (const [name, value] of Object.entries(entries)) {
-      const canonicals = kind === 'responsibilities' ? canonicalPathsForResponsibility(value) : [typeof value === 'string' ? value : value?.canonical].filter(Boolean);
+      const canonicals = canonicalPathsForEntry(kind, value);
       const aliases = typeof value === 'object' && Array.isArray(value?.aliases) ? value.aliases : [];
       if (!canonicals.length || canonicals.some((canonical) => !isSafeRelativePath(canonical))) {
         out.push(violation('registry/missing-canonical', [config.registryFile], `Registry entry ${kind}.${name} has no valid canonical path`, `${kind}.${name}`));
