@@ -22,6 +22,13 @@ Not allowed:
 
 If a routine PR needs one of those actions merely to pass, the code change is not finished.
 
+Two registry edits are routine, not governance, because the same run already judges them:
+
+- **Declaring** a responsibility or component that did not exist. `analyzeRegistry` rejects a canonical path that is already claimed, missing, or left beside a peer.
+- **Retiring** an entry whose every canonical path is absent from the tree **and** tombstoned: a record with that `path` in `<registry dir>/tombstones/*.json` or `<registry dir>/tombstones.json`. Deleting a dead module and its entry together is cleanup. Removing an entry whose canonical file still exists, or was never tombstoned, is still `policy/registry-changed`.
+
+Both need a readable base ref; without one, every registry edit is governance.
+
 ## Governance PR
 
 Use a governance PR for a real architecture/policy decision.

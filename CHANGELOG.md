@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1 — unreleased
+
+- registry: removing an entry whose every canonical path is absent from the tree and tombstoned (`.greenroom/tombstones/*.json` or `.greenroom/tombstones.json`) is a retirement, not `policy/registry-changed`, on both the branch and the baseline-hash path. Removing an entry whose canonical is still live still raises it.
+- ratchet: a duplicate cluster that lost a file is cleanup, not new entropy.
+- scripts/chain: a shared basename is not the same file.
+
 ## 1.0.0 — 2026-09-17
 
 Initial production release of Green Room.
