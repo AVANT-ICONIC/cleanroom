@@ -41,11 +41,47 @@ export function inferCompareRef(root, config, explicit = null) {
   return null;
 }
 
+const COMPARE_PREFIX = 'greenroom-compare-';
+const OWNER_FILE = 'owner.pid';
+// A tree with no owner file predates it; give a run that long to finish first.
+const UNOWNED_GRACE_MS = 6 * 60 * 60 * 1000;
+
+function ownerAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; }
+}
+
+// The finally below never runs when a run is killed (a deadline SIGKILL), and
+// each leftover is a full checkout. Remove trees whose owner is gone.
+export function sweepStaleCompareTrees(root, { tmp = os.tmpdir(), now = Date.now() } = {}) {
+  let names;
+  try { names = fs.readdirSync(tmp); } catch { return []; }
+  const removed = [];
+  for (const name of names) {
+    if (!name.startsWith(COMPARE_PREFIX)) continue;
+    const dir = path.join(tmp, name);
+    let pid = null;
+    try { pid = Number.parseInt(fs.readFileSync(path.join(dir, OWNER_FILE), 'utf8'), 10); } catch {}
+    if (pid != null && !Number.isNaN(pid)) {
+      if (ownerAlive(pid)) continue;
+    } else {
+      let mtime;
+      try { mtime = fs.statSync(dir).mtimeMs; } catch { continue; }
+      if (now - mtime < UNOWNED_GRACE_MS) continue;
+    }
+    try { fs.rmSync(dir, { recursive: true, force: true }); removed.push(dir); } catch {}
+  }
+  if (removed.length && root) git(root, ['worktree', 'prune']);
+  return removed;
+}
+
 export function withRefWorktree(root, ref, fn) {
   if (!ref || !hasGit(root)) return null;
   const resolved = git(root, ['rev-parse', '--verify', `${ref}^{commit}`]);
   if (!resolved) return null;
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'greenroom-compare-'));
+  sweepStaleCompareTrees(root);
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), COMPARE_PREFIX));
+  fs.writeFileSync(path.join(parent, OWNER_FILE), String(process.pid));
   const target = path.join(parent, 'tree');
   try {
     execFileSync('git', ['-C', root, 'worktree', 'add', '--detach', '--quiet', target, resolved], { stdio: ['ignore', 'ignore', 'pipe'] });
