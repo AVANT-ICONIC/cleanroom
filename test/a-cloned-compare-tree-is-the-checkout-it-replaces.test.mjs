@@ -9,6 +9,8 @@ import { cloneRefTree, treeIsRef, withRefWorktree } from '../src/comparison.mjs'
 const darwin = process.platform === 'darwin';
 
 function git(root, ...args) { return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim(); }
+/** The bytes a checkout of `rev:rel` writes, after this platform's filters (CRLF under autocrlf on Windows). */
+function checkedOutBytes(root, rev, rel) { return execFileSync('git', ['cat-file', '--filters', `${rev}:${rel}`], { cwd: root, encoding: 'utf8' }); }
 function put(root, rel, text, mode) {
   const p = path.join(root, rel);
   fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -97,7 +99,9 @@ test('a compare run registers no worktree and leaves no tree behind', () => {
     let seen = null;
     const result = withRefWorktree(root, base, (tree) => {
       seen = tree;
-      assert.equal(fs.readFileSync(path.join(tree, 'src', 'a.ts'), 'utf8'), 'export const a = 1;\n');
+      // The base bytes, not the unstaged edit, exactly as a checkout of the base writes them here.
+      assert.equal(fs.readFileSync(path.join(tree, 'src', 'a.ts'), 'utf8'), checkedOutBytes(root, base, 'src/a.ts'));
+      assert.match(fs.readFileSync(path.join(tree, 'src', 'a.ts'), 'utf8'), /^export const a = 1;\r?\n$/);
       assert.equal(fs.existsSync(path.join(tree, 'node_modules')), false, 'ignored junk never reaches the base scan');
       assert.equal(fs.existsSync(path.join(tree, 'src', 'untracked-lane-work.ts')), false, 'untracked work never reaches the base scan');
       if (darwin) assert.equal(git(root, 'worktree', 'list', '--porcelain'), before, 'nothing is registered while the clone is in use');
