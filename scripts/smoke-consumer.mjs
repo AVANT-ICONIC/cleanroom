@@ -5,13 +5,13 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const packRaw = execFileSync('npm', ['pack', '--json'], { cwd: root, encoding: 'utf8' });
+const packRaw = execFileSync('npm', ['pack', '--json'], { cwd: root, encoding: 'utf8', shell: process.platform === 'win32' });
 const packed = JSON.parse(packRaw)[0].filename;
 const tarball = path.join(root, packed);
 const consumer = fs.mkdtempSync(path.join(os.tmpdir(), 'green-room-consumer-'));
 try {
   fs.writeFileSync(path.join(consumer, 'package.json'), JSON.stringify({ name: 'consumer', version: '1.0.0', private: true }, null, 2));
-  execFileSync('npm', ['install', '--no-audit', '--no-fund', '--ignore-scripts', tarball], { cwd: consumer, stdio: 'pipe' });
+  execFileSync('npm', ['install', '--no-audit', '--no-fund', '--ignore-scripts', tarball], { cwd: consumer, stdio: 'pipe', shell: process.platform === 'win32' });
   const bin = path.join(consumer, 'node_modules', '.bin', process.platform === 'win32' ? 'greenroom.cmd' : 'greenroom');
   let r = spawnSync(bin, ['init', '--existing'], { cwd: consumer, encoding: 'utf8', shell: process.platform === 'win32' });
   if (r.status !== 0) throw new Error(r.stderr || r.stdout);
