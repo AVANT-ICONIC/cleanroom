@@ -95,13 +95,21 @@ export function sweepStaleCompareTrees(root, { tmp = os.tmpdir(), now = Date.now
 //      one `cp -c -R` per parent directory for all of them at once.
 //   3. Every other base path is written from git's object store through
 //      `cat-file --batch --filters`, so filters apply exactly as a checkout's.
+//   4. The checkout is live: a lane may write between git's readings and the
+//      clone, and that write would be scanned as the base (a false clean). So
+//      once the tree is built, git reads the index, the unstaged changes and
+//      the untracked entries again and they must be byte-identical to the
+//      first readings, and the tree is walked: its paths must be exactly the
+//      base commit's blobs (file or link, as committed) plus an empty
+//      directory per gitlink. Any difference throws, and the caller checks
+//      the base out instead.
 //
 // The tree holds exactly the base commit's paths and bytes, like the checkout
 // it replaces, and has no .git: the scan only reads files, and git ignore
 // rules have nothing to hide in a tree that holds only tracked paths. Anything
 // unexpected (no APFS, a path with a newline, a git reading that fails) falls
 // back to `git worktree add`, which stays the reference behaviour.
-export function cloneRefTree(root, resolved, target, { stats = null } = {}) {
+export function cloneRefTree(root, resolved, target, { stats = null, beforeCopy = null } = {}) {
   if (process.platform !== 'darwin' || process.env.GREENROOM_COMPARE_CLONE === '0') return false;
   const top = git(root, ['rev-parse', '--show-toplevel']);
   if (!top) return false;
@@ -119,16 +127,23 @@ export function cloneRefTree(root, resolved, target, { stats = null } = {}) {
     const [mode, type, sha] = rec.slice(0, tab).split(' ');
     ref.set(rec.slice(tab + 1), { mode, type, sha });
   }
+  // The index, the unstaged changes and every untracked entry (ignored ones
+  // included, directories collapsed), raw, so they can be read again and compared.
+  const readState = () => ({
+    index: run(['ls-files', '-s', '-v', '-z']),
+    dirty: run(['diff', '--name-only', '--no-renames', '-z']),
+    untracked: run(['ls-files', '-z', '--others', '--directory']),
+  });
+  const first = readState();
   // The index, with its tag: H is plain; lowercase is assume-unchanged, S is skip-worktree.
   const index = new Map();
-  for (const rec of split(run(['ls-files', '-s', '-v', '-z']))) {
+  for (const rec of split(first.index)) {
     const tab = rec.indexOf('\t');
     const [tag, mode, sha, stage] = rec.slice(0, tab).split(' ');
     index.set(rec.slice(tab + 1), { tag, mode, sha, stage });
   }
-  const dirty = new Set(split(run(['diff', '--name-only', '--no-renames', '-z'])));
-  // Every untracked entry, ignored ones included, directories collapsed.
-  const untracked = split(run(['ls-files', '-z', '--others', '--directory'])).map((p) => p.replace(/\/$/, ''));
+  const dirty = new Set(split(first.dirty));
+  const untracked = split(first.untracked).map((p) => p.replace(/\/$/, ''));
 
   for (const p of [...ref.keys(), ...index.keys(), ...untracked]) if (p.includes('\n')) return false;
 
@@ -150,6 +165,7 @@ export function cloneRefTree(root, resolved, target, { stats = null } = {}) {
     while (d !== '.' && !mixed.has(d)) { mixed.add(d); d = path.posix.dirname(d); }
   }
 
+  if (beforeCopy) beforeCopy();
   fs.mkdirSync(target, { recursive: true });
   let clonedEntries = 0;
   const visit = (rel) => {
@@ -193,11 +209,18 @@ export function cloneRefTree(root, resolved, target, { stats = null } = {}) {
     }
   }
   for (const [p, e] of ref) if (e.type === 'commit') fs.mkdirSync(path.join(target, p), { recursive: true });
+
+  // Nothing may have moved under the clone (step 4 above).
+  const again = readState();
+  for (const k of ['index', 'dirty', 'untracked']) {
+    if (!again[k].equals(first[k])) throw new Error(`the checkout changed while the base tree was cloned (${k})`);
+  }
+  if (!treeMatches(ref, target)) throw new Error('the cloned tree is not the base commit');
   if (stats) Object.assign(stats, { method: 'clone', clonedEntries, writtenFiles: write.length, writtenBytes });
   return true;
 }
 
-export function withRefWorktree(root, ref, fn, { stats = null } = {}) {
+export function withRefWorktree(root, ref, fn, { stats = null, beforeCopy = null } = {}) {
   if (!ref || !hasGit(root)) return null;
   const resolved = git(root, ['rev-parse', '--verify', `${ref}^{commit}`]);
   if (!resolved) return null;
@@ -208,7 +231,7 @@ export function withRefWorktree(root, ref, fn, { stats = null } = {}) {
   let registered = false;
   try {
     let cloned = false;
-    try { cloned = cloneRefTree(root, resolved, target, { stats }); } catch { cloned = false; }
+    try { cloned = cloneRefTree(root, resolved, target, { stats, beforeCopy }); } catch { cloned = false; }
     if (!cloned) {
       fs.rmSync(target, { recursive: true, force: true });
       execFileSync('git', ['-C', root, 'worktree', 'add', '--detach', '--quiet', target, resolved], { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -220,6 +243,45 @@ export function withRefWorktree(root, ref, fn, { stats = null } = {}) {
     if (registered) try { execFileSync('git', ['-C', root, 'worktree', 'remove', '--force', target], { stdio: 'ignore' }); } catch {}
     try { fs.rmSync(parent, { recursive: true, force: true }); } catch {}
   }
+}
+
+// The tree holds exactly the base commit's paths: every blob as a file or a
+// link as committed, an empty directory per gitlink, no directory nothing in
+// the commit needs, and nothing else.
+function treeMatches(ref, target) {
+  const want = new Map();
+  const dirs = new Set();
+  for (const [p, e] of ref) {
+    want.set(p, e.type === 'commit' ? 'gitlink' : e.mode === '120000' ? 'link' : 'file');
+    let d = path.posix.dirname(p);
+    while (d !== '.' && !dirs.has(d)) { dirs.add(d); d = path.posix.dirname(d); }
+  }
+  let seen = 0;
+  const walk = (rel) => {
+    for (const ent of fs.readdirSync(rel ? path.join(target, rel) : target, { withFileTypes: true })) {
+      const r = rel ? `${rel}/${ent.name}` : ent.name;
+      const kind = want.get(r);
+      if (ent.isSymbolicLink()) { if (kind !== 'link') return false; seen++; }
+      else if (ent.isDirectory()) {
+        if (kind === 'gitlink') { if (fs.readdirSync(path.join(target, r)).length) return false; seen++; }
+        else if (!dirs.has(r) || !walk(r)) return false;
+      } else if (ent.isFile()) { if (kind !== 'file') return false; seen++; }
+      else return false;
+    }
+    return true;
+  };
+  return walk('') && seen === want.size;
+}
+
+export function treeIsRef(root, resolved, target) {
+  const out = execFileSync('git', ['-C', root, 'ls-tree', '-r', '-z', '--full-tree', resolved], { maxBuffer: 1024 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+  const ref = new Map();
+  for (const rec of out.toString('utf8').split('\0').filter(Boolean)) {
+    const tab = rec.indexOf('\t');
+    const [mode, type] = rec.slice(0, tab).split(' ');
+    ref.set(rec.slice(tab + 1), { mode, type });
+  }
+  return treeMatches(ref, target);
 }
 
 export function refHasGreenRoom(root) {

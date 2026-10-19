@@ -3,6 +3,7 @@
 ## 1.1.1 — unreleased
 
 - compare: on APFS the base tree is cloned from the checkout (`cp -c`) and only paths that differ from the base commit are written from git objects; anything unexpected falls back to `git worktree add`. Measured on an isolated APFS volume with an apex-nexus checkout (14.5k files, 5 changed files): 198 MB written per check before, 5.6 to 6.1 MB after, 6.2 to 9.2 s to the tree before, 4.2 to 4.9 s after. `GREENROOM_COMPARE_CLONE=0` keeps the checkout.
+- compare: the cloned tree is proven before it is scanned. After the clone, git reads the index, the unstaged changes and the untracked entries again and they must match the first readings byte for byte, and the tree's paths must be exactly the base commit's blobs plus an empty directory per gitlink. A lane writing into the checkout mid-clone (which leaked into the base tree and read as clean) now falls back to `git worktree add`. Cost on the apex-nexus checkout at load 147: 0.23 s of git readings, 0.47 s for the walk.
 - registry: removing an entry whose every canonical path is absent from the tree and tombstoned (`.greenroom/tombstones/*.json` or `.greenroom/tombstones.json`) is a retirement, not `policy/registry-changed`, on both the branch and the baseline-hash path. Removing an entry whose canonical is still live still raises it.
 - ratchet: a duplicate cluster that lost a file is cleanup, not new entropy.
 - scripts/chain: a shared basename is not the same file.

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { cloneRefTree, withRefWorktree } from '../src/comparison.mjs';
+import { cloneRefTree, treeIsRef, withRefWorktree } from '../src/comparison.mjs';
 
 const darwin = process.platform === 'darwin';
 
@@ -46,6 +46,7 @@ function repo() {
   put(root, 'src/deep/c.ts', 'export const c = 1;\n');
   put(root, 'bin/run.sh', '#!/bin/sh\necho base\n', 0o755);
   put(root, 'docs/keep.md', 'base doc\n');
+  put(root, 'lib/stable.ts', 'export const stable = 1;\n');
   put(root, 'gone-later.ts', 'export const gone = 1;\n');
   if (process.platform !== 'win32') fs.symlinkSync('src/a.ts', path.join(root, 'link-to-a'));
   git(root, 'add', '-A');
@@ -120,5 +121,44 @@ test('GREENROOM_COMPARE_CLONE=0 keeps the plain checkout', () => {
   } finally {
     if (saved === undefined) delete process.env.GREENROOM_COMPARE_CLONE; else process.env.GREENROOM_COMPARE_CLONE = saved;
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// A writer that lands between git's readings and the clone must never be scanned as the base.
+for (const [name, write] of [
+  ['a tracked file changed after git read it', (root) => put(root, 'lib/stable.ts', 'export const stable = 2; // written mid-clone\n')],
+  ['an untracked file created after git read the tree', (root) => put(root, 'lib/late-lane-work.ts', 'export const late = 1;\n')],
+]) {
+  test(`${name} sends the compare run back to the checkout`, { skip: !darwin && 'the clone runs on APFS only' }, () => {
+    const { root, base } = repo();
+    try {
+      const stats = {};
+      const seen = withRefWorktree(root, base, (tree) => snapshot(tree), { stats, beforeCopy: () => write(root) });
+      assert.equal(stats.method, 'worktree', JSON.stringify(stats));
+      assert.equal(seen['lib/stable.ts'], '-:export const stable = 1;\n');
+      assert.equal(seen['lib/late-lane-work.ts'], undefined);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
+
+test('a compare tree with one path more or one path less than the base commit is refused', { skip: process.platform === 'win32' && 'symlinks need privileges on Windows' }, () => {
+  const { root, base } = repo();
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'green-room-verify-'));
+  const tree = path.join(parent, 'tree');
+  try {
+    git(root, 'worktree', 'add', '--detach', '--quiet', tree, base);
+    fs.rmSync(path.join(tree, '.git'), { force: true });
+    assert.equal(treeIsRef(root, base, tree), true, 'a fresh checkout is the base commit');
+    put(tree, 'src/extra.ts', 'not in the base\n');
+    assert.equal(treeIsRef(root, base, tree), false, 'an extra file');
+    fs.rmSync(path.join(tree, 'src', 'extra.ts'));
+    fs.mkdirSync(path.join(tree, 'empty-extra'));
+    assert.equal(treeIsRef(root, base, tree), false, 'an extra directory');
+    fs.rmSync(path.join(tree, 'empty-extra'), { recursive: true });
+    fs.rmSync(path.join(tree, 'docs', 'keep.md'));
+    assert.equal(treeIsRef(root, base, tree), false, 'a missing file');
+  } finally {
+    try { git(root, 'worktree', 'remove', '--force', tree); } catch {}
+    for (const d of [root, parent]) fs.rmSync(d, { recursive: true, force: true });
   }
 });
