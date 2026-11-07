@@ -147,7 +147,12 @@ try {
   const providerOpt = option('provider');
   if (providerOpt && !['fallow','knip','project-native'].includes(providerOpt)) throw new Error(`Unknown provider: ${providerOpt}`);
   const includeProviders = ['audit','clean','plan','next','cleanup','explain'].includes(command);
-  const result = scan(root, config, { includeProviders, onlyProviders: providerOpt ? [providerOpt] : null });
+  // SCANNED ON FIRST USE, NOT BEFORE DISPATCH. MEASURED 2026-11-07 on apex-nexus:
+  // `check` paid for this scan of the working tree, threw it away, and evaluateCheck
+  // scanned the tree again, so every gate run scanned the head twice. Commands that
+  // read `result` scan once, exactly as before; `check` and the rest never pay for it.
+  let scanned = null;
+  const getResult = () => (scanned ??= scan(root, config, { includeProviders, onlyProviders: providerOpt ? [providerOpt] : null }));
 
   if (command === 'providers') {
     const p = scanProviders(root, config, { only: providerOpt ? [providerOpt] : null });
@@ -160,9 +165,9 @@ try {
   }
 
   if (command === 'audit') {
-    const applied = applyWaivers(result.violations, loadWaivers(root, config));
-    if (json) printJson({ ...result, waivers: { active: applied.waived, expired: applied.expired } });
-    else writeStdout(auditText(result, { waived: applied.waived, expired: applied.expired }) + '\n');
+    const applied = applyWaivers(getResult().violations, loadWaivers(root, config));
+    if (json) printJson({ ...getResult(), waivers: { active: applied.waived, expired: applied.expired } });
+    else writeStdout(auditText(getResult(), { waived: applied.waived, expired: applied.expired }) + '\n');
     process.exit(0);
   }
 
@@ -176,7 +181,7 @@ try {
       console.error('Forced re-baselining requires --reason="..." so the governance change is auditable.');
       process.exit(2);
     }
-    const b = makeBaseline(root, config, result);
+    const b = makeBaseline(root, config, getResult());
     if (existingBaseline) appendGovernanceLog(root, { action: 'rebaseline', reason: option('reason'), beforeEntropy: existingBaseline.entropy, afterEntropy: b.entropy });
     console.log(`Baseline saved: ${config.baselineFile}\n${b.violations.length} existing violation(s) grandfathered.\nRoutine changes may introduce 0 new violations.`);
     process.exit(0);
@@ -226,7 +231,7 @@ try {
   if (command === 'explain') {
     const id = positional(1)[0];
     if (!id) { console.error('Usage: greenroom explain <finding-id>'); process.exit(2); }
-    const item = result.findings?.find((x) => x.id === id) || result.violations.find((x) => x.id === id);
+    const item = getResult().findings?.find((x) => x.id === id) || getResult().violations.find((x) => x.id === id);
     if (!item) { console.error(`Finding not found: ${id}`); process.exit(2); }
     if (json) printJson(item); else console.log(JSON.stringify(item, null, 2));
     process.exit(0);
@@ -235,7 +240,7 @@ try {
   if (command === 'doctor' || command === 'find') {
     const query = positional(1).join(' ').trim();
     if (!query) { console.error(`Usage: greenroom ${command} "task description"`); process.exit(2); }
-    const r = doctor(query, root, config, result, sourceFiles(root, config));
+    const r = doctor(query, root, config, getResult(), sourceFiles(root, config));
     if (json) printJson(r); else console.log(doctorText(r));
     process.exit(0);
   }
@@ -275,7 +280,7 @@ try {
   if (command === 'clean' || command === 'plan' || command === 'next' || (command === 'cleanup' && positional(1)[0] === 'plan')) {
     const batchSize = Number.parseInt(option('batch-size', '12'), 10);
     if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 100) { console.error('--batch-size must be an integer from 1 to 100'); process.exit(2); }
-    const p = createPlan(result, { batchSize, root });
+    const p = createPlan(getResult(), { batchSize, root });
     if (command === 'next') {
       const next = nextCleanupBatch(p);
       if (json) printJson(next || { clean: true });
@@ -294,7 +299,7 @@ try {
   if (command === 'waive') {
     const id = positional(1)[0];
     if (!id) { console.error('Usage: greenroom waive <violation-id> --reason="..." --owner=name --expires=YYYY-MM-DD'); process.exit(2); }
-    const target = result.violations.find((v) => v.id === id);
+    const target = getResult().violations.find((v) => v.id === id);
     if (!target) { console.error(`Violation not found in current audit: ${id}`); process.exit(2); }
     const waiver = addWaiver(root, config, target, { reason: option('reason'), owner: option('owner', ''), expiresAt: option('expires', '') });
     appendGovernanceLog(root, { action: 'waive', id, rule: target.rule, reason: waiver.reason, owner: waiver.owner, expiresAt: waiver.expiresAt || null });
