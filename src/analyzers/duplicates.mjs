@@ -64,9 +64,14 @@ export function analyzeDuplicates(files, config) {
         const block = window.join('\n');
         if (block.length < 180) continue;
         const h = sha(block);
-        const hit = { path: f.rel, start: i + 1 };
-        if (!index.has(h)) index.set(h, { block, hits: [] });
-        index.get(h).hits.push(hit);
+        // THE INDEX HOLDS WHERE A WINDOW WAS SEEN, NEVER ITS TEXT. MEASURED 2026-11-07
+        // on apex-nexus (5,961 files): keeping each window's block beside its hash
+        // took the heap from 34 MB to 215 MB, and nothing ever read it back. A window
+        // seen once (almost all of them) is one [path, start] pair, not an object.
+        const prior = index.get(h);
+        if (prior === undefined) index.set(h, [f.rel, i + 1]);
+        else if (typeof prior[0] === 'string') index.set(h, [prior, [f.rel, i + 1]]);
+        else prior.push([f.rel, i + 1]);
       }
     }
     // Sliding windows produce many adjacent hashes for one copied region. Collapse
@@ -74,15 +79,18 @@ export function analyzeDuplicates(files, config) {
     // Otherwise two distinct copy/paste problems can look like one violation.
     const emittedByFileSet = new Map();
     const candidates = [];
-    for (const [h, group] of index) {
-      const uniqueFiles = [...new Set(group.hits.map((x) => x.path))].sort();
-      if (uniqueFiles.length < (config.duplicateBlocks.minOccurrences || 2)) continue;
+    const minOccurrences = config.duplicateBlocks.minOccurrences || 2;
+    for (const [h, seen] of index) {
+      const once = typeof seen[0] === 'string';
+      if (once && minOccurrences > 1) continue; // seen once: one file, never a duplicate
+      const entry = once ? [seen] : seen;
+      const uniqueFiles = [...new Set(entry.map(([path]) => path))].sort();
+      if (uniqueFiles.length < minOccurrences) continue;
       const starts = new Map();
-      for (const file of uniqueFiles) {
-        const values = group.hits.filter((x) => x.path === file).map((x) => x.start);
-        starts.set(file, Math.min(...values));
+      for (const [path, start] of entry) {
+        if (!starts.has(path) || start < starts.get(path)) starts.set(path, start);
       }
-      candidates.push({ h, group, uniqueFiles, starts });
+      candidates.push({ h, uniqueFiles, starts });
     }
     candidates.sort((a, b) => {
       const ak = a.uniqueFiles.join('|');
@@ -93,7 +101,7 @@ export function analyzeDuplicates(files, config) {
     });
 
     for (const candidate of candidates) {
-      const { h, group, uniqueFiles, starts } = candidate;
+      const { h, uniqueFiles, starts } = candidate;
       const key = uniqueFiles.join('|');
       const prior = emittedByFileSet.get(key) || [];
       const overlapsExisting = prior.some((positions) =>
