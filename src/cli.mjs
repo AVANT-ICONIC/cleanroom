@@ -1,4 +1,4 @@
-#!/usr/bin/env -S node --max-semi-space-size=4
+#!/usr/bin/env -S node --optimize-for-size
 import process from 'node:process';
 import path from 'node:path';
 import fs from 'node:fs';

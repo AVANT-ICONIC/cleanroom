@@ -9,10 +9,10 @@ function normalizeCommand(value) {
 /** Evidence-only script governance. Deterministic script chains remain blocking in scripts.mjs;
  * these findings identify likely consolidation work that still needs human/agent canonicality review.
  */
-export function analyzeScriptJunk(root, files, config) {
+export function analyzeScriptJunk(root, files, config, packageFiles = null) {
   if (!config.rules.scriptJunkDrawer) return { findings: [] };
   const findings = [];
-  const packages = walk(root, config).filter((f) => path.basename(f.rel) === 'package.json');
+  const packages = packageFiles ? [...packageFiles] : walk(root, config).filter((f) => path.basename(f.rel) === 'package.json');
   if (!packages.some((f) => f.rel === 'package.json')) packages.unshift({ rel: 'package.json', abs: path.join(root, 'package.json') });
 
   for (const pkgFile of packages) {

@@ -28,7 +28,15 @@ export const writeText = (p, value) => {
 export const sha = (input) => crypto.createHash('sha256').update(input).digest('hex');
 
 function escapeRegex(s) { return s.replace(/[|\\{}()[\]^$+?.]/g, '\\$&'); }
+// A compiled glob per pattern string. The walk tested every entry against every
+// ignore pattern and compiled each pattern again for each test.
+const GLOBS = new Map();
 export function globRegex(pattern) {
+  let re = GLOBS.get(pattern);
+  if (!re) { re = compileGlob(pattern); GLOBS.set(pattern, re); }
+  return re;
+}
+function compileGlob(pattern) {
   const p = toPosix(pattern);
   let out = '^';
   for (let i = 0; i < p.length; i++) {
@@ -124,8 +132,8 @@ export function walk(root, config) {
   return out;
 }
 
-export function sourceFiles(root, config) {
-  return walk(root, config).filter((f) => SOURCE_EXTENSIONS.has(f.ext));
+export function sourceFiles(root, config, entries = walk(root, config)) {
+  return entries.filter((f) => SOURCE_EXTENSIONS.has(f.ext));
 }
 
 export function isInsideAny(rel, roots = []) {

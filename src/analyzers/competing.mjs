@@ -6,13 +6,27 @@ const NOISE = new Set(['fix','fixed','repair','repaired','normalize','normalise'
 const SUSPICIOUS = /(?:^|[-_.])(fix(?:ed)?|repair(?:ed)?|final|new|old|backup|copy|temp|tmp|v\d+)(?:[-_.]|$)/i;
 const STYLE_EXTS = new Set(['.css','.scss','.sass','.less']);
 
-function tokens(rel) {
+// Tokens, token set and signature are a function of the path alone, and the fuzzy
+// loop asks for them once per pair. A per-run memo answers each file once.
+let memo = null;
+function memoOf(rel) {
+  let m = memo?.get(rel);
+  if (!m) {
+    const t = rawTokens(rel);
+    const set = new Set(t);
+    m = { tokens: t, set, signature: [...set].sort().join('-') };
+    memo?.set(rel, m);
+  }
+  return m;
+}
+function tokens(rel) { return memoOf(rel).tokens; }
+function rawTokens(rel) {
   return path.basename(rel, path.extname(rel)).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).filter((x) => !NOISE.has(x) && !/^v\d+$/.test(x));
 }
-function signature(rel) { return [...new Set(tokens(rel))].sort().join('-'); }
+function signature(rel) { return memoOf(rel).signature; }
 function similarity(a, b) {
-  const A = new Set(tokens(a));
-  const B = new Set(tokens(b));
+  const A = memoOf(a).set;
+  const B = memoOf(b).set;
   const shared = [...A].filter((x) => B.has(x)).length;
   const union = new Set([...A, ...B]).size || 1;
   return { shared, score: shared / union };
@@ -36,6 +50,11 @@ function key(a, b) { return [a, b].sort().join('|'); }
  */
 export function analyzeCompetingResponsibilities(files, config) {
   if (!config.rules.competingResponsibilities) return { violations: [], findings: [] };
+  memo = new Map();
+  try { return competing(files); } finally { memo = null; }
+}
+
+function competing(files) {
 
   const code = files.filter((f) => !STYLE_EXTS.has(f.ext));
   const parent = new Map(code.map((f) => [f.rel, f.rel]));

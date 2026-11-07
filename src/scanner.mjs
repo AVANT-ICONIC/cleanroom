@@ -1,4 +1,5 @@
-import { sourceFiles } from './lib/fs.mjs';
+import path from 'node:path';
+import { sourceFiles, walk } from './lib/fs.mjs';
 import { analyzeNaming } from './analyzers/naming.mjs';
 import { analyzeDesign } from './analyzers/design.mjs';
 import { analyzeDuplicates } from './analyzers/duplicates.mjs';
@@ -19,21 +20,27 @@ import { corroborate } from './corroboration.mjs';
 import { analyzeBudgets } from './analyzers/budgets.mjs';
 
 export function scan(root, config, { includeProviders = false, onlyProviders = null } = {}) {
-  const files = sourceFiles(root, config);
+  // ONE WALK PER SCAN. generated, script-junk and the package-script chains each
+  // walked the whole tree again (and spawned `git ls-files` again) for the same
+  // root and config. The walk is taken once here and released after generated.
+  let entries = walk(root, config);
+  const files = sourceFiles(root, config, entries);
+  const packageFiles = entries.filter((f) => path.basename(f.rel) === 'package.json');
   const importResult = analyzeImports(root, files, config);
   const registryResult = analyzeRegistry(root, files, config);
   const stranded = analyzeStranded(files, importResult.graph, config);
   const competing = analyzeCompetingResponsibilities(files, config);
-  const generated = analyzeGenerated(root, config);
+  const generated = analyzeGenerated(root, config, entries);
+  entries = null;
   const scriptOwnership = analyzeScriptOwnership(root, files, config);
-  const scriptJunk = analyzeScriptJunk(root, files, config);
+  const scriptJunk = analyzeScriptJunk(root, files, config, packageFiles);
   const responsibilityBoundaries = analyzeResponsibilityBoundaries(root, importResult.graph, config);
   const rawViolations = [
     ...analyzeNaming(files, config),
     ...analyzeDesign(files, config),
     ...analyzeDuplicates(files, config),
     ...importResult.violations,
-    ...analyzeScripts(root, files, config),
+    ...analyzeScripts(root, files, config, { graph: importResult.graph, packageFiles }),
     ...registryResult.violations,
     ...responsibilityBoundaries,
     ...analyzeWrappers(files, config),

@@ -17,10 +17,10 @@ export function loadGeneratedRegistry(root, config) {
   return data;
 }
 
-export function analyzeGenerated(root, config) {
+export function analyzeGenerated(root, config, entries = null) {
   if (!config.rules.generatedArtifacts) return { violations: [], findings: [] };
   const registry = loadGeneratedRegistry(root, config);
-  const all = walk(root, config);
+  const all = entries || walk(root, config);
   const violations=[]; const findings=[];
   for (const [rel, item] of Object.entries(registry.artifacts)) {
     const target = path.join(root, rel);

@@ -36,9 +36,9 @@ function lifecycleAllowed(name, ref, config) {
   return name === `pre${ref}` || name === `post${ref}`;
 }
 
-function packageScriptViolations(root, config) {
+function packageScriptViolations(root, config, packageFiles = null) {
   const out = [];
-  const packages = walk(root, config).filter((f) => path.basename(f.rel) === 'package.json');
+  const packages = packageFiles ? [...packageFiles] : walk(root, config).filter((f) => path.basename(f.rel) === 'package.json');
   if (!packages.some((f) => f.rel === 'package.json')) packages.unshift({ rel: 'package.json', abs: path.join(root, 'package.json') });
   const allowedPackage = new Set(config.scripts.allowPackageChains || []);
   for (const pkgFile of packages) {
@@ -58,12 +58,13 @@ function packageScriptViolations(root, config) {
   return out;
 }
 
-export function analyzeScripts(root, files, config) {
+export function analyzeScripts(root, files, config, { graph: builtGraph = null, packageFiles = null } = {}) {
   if (!config.rules.scriptChains) return [];
   const out = [];
   const scriptFiles = files.filter((f) => isInsideAny(f.rel, config.scriptRoots || []));
   const scriptSet = new Set(scriptFiles.map((f) => f.rel));
-  const graph = buildGraph(root, files);
+  // The scanner hands over the import graph it already built from the same files.
+  const graph = builtGraph || buildGraph(root, files);
   const allowed = new Set(config.scripts.allowScriptImports || []);
   for (const f of scriptFiles) {
     // AN IMPORT IS A KNOWN EDGE, NOT A GUESS, SO IT IS REPORTED AS ONE.
@@ -89,6 +90,6 @@ export function analyzeScripts(root, files, config) {
       if ([...variants].some((candidate) => mentionsPath(text, candidate)) && !allowed.has(`${f.rel}->${target}`)) out.push(violation('scripts/chain', [f.rel, target], `Script invokes another script path: ${f.rel} -> ${target}`, `${f.rel}->${target}`));
     }
   }
-  out.push(...packageScriptViolations(root, config));
+  out.push(...packageScriptViolations(root, config, packageFiles));
   return out;
 }
