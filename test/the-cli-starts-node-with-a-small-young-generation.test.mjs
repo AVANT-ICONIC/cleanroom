@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 const cli = new URL('../src/cli.mjs', import.meta.url);
 
 test('the CLI shebang starts node with a 4 MB semi-space', () => {
-  const first = fs.readFileSync(cli, 'utf8').split('\n', 1)[0];
+  const first = fs.readFileSync(cli, 'utf8').split(/\r?\n/, 1)[0];
   assert.equal(first, '#!/usr/bin/env -S node --max-semi-space-size=4');
 });
 
