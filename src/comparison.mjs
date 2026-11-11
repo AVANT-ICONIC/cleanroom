@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { exists } from './lib/fs.mjs';
+import { exists, forgetText } from './lib/fs.mjs';
 
 function git(root, args, { quiet = true } = {}) {
   try {
@@ -204,7 +204,7 @@ export function cloneRefTree(root, resolved, target, { stats = null, beforeCopy 
       fs.rmSync(dst, { force: true, recursive: true });
       const mode = ref.get(p).mode;
       if (mode === '120000') fs.symlinkSync(body.toString('utf8'), dst);
-      else fs.writeFileSync(dst, body, { mode: mode === '100755' ? 0o755 : 0o644 });
+      else { forgetText(dst); fs.writeFileSync(dst, body, { mode: mode === '100755' ? 0o755 : 0o644 }); }
       writtenBytes += size;
     }
   }

@@ -21,7 +21,7 @@ function normalizedScriptPath(value) { return value.replace(/^\.\//, '').replace
 // builds is still searched, and a sibling named bare, as ./name, or by its
 // full path from the root all still match.
 const PATH_CHARACTER = /[A-Za-z0-9_.\-/]/;
-function mentionsPath(text, candidate) {
+export function mentionsPath(text, candidate) {
   if (!candidate) return false;
   let from = 0;
   for (;;) {
@@ -30,6 +30,33 @@ function mentionsPath(text, candidate) {
     if (at === 0 || !PATH_CHARACTER.test(text[at - 1])) return true;
     from = at + 1;
   }
+}
+// PERF (measured 2026-11-12, one check on apex-nexus): mentionsPath scanned the
+// whole text once per (script, target, variant), about 16% of the run. The
+// same answer comes from one pass per file: a candidate made only of path
+// characters is mentioned exactly when it is a prefix of a maximal path-character
+// run, because a run starts only where the character before cannot continue a
+// path. The distinct runs are sorted once and each candidate is a binary search.
+// Candidates with any other character keep the exact scan above.
+const PATH_RUN = /[A-Za-z0-9_.\-/]+/g;
+const PATH_ONLY = /^[A-Za-z0-9_.\-/]+$/;
+export function pathRunIndex(text) {
+  return [...new Set(text.match(PATH_RUN) || [])].sort();
+}
+function startsARun(sortedRuns, candidate) {
+  let lo = 0;
+  let hi = sortedRuns.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sortedRuns[mid] < candidate) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo < sortedRuns.length && sortedRuns[lo].startsWith(candidate);
+}
+export function mentionsIndexed(text, runs, candidate) {
+  if (!candidate) return false;
+  if (PATH_ONLY.test(candidate)) return startsARun(runs, candidate);
+  return mentionsPath(text, candidate);
 }
 function lifecycleAllowed(name, ref, config) {
   if (!config.scripts.allowLifecycleHooks) return false;
@@ -82,12 +109,13 @@ export function analyzeScripts(root, files, config, { graph: builtGraph = null, 
     // convicting a file for documenting where a number came from is noise that
     // buries the real chains. See codeWithoutComments.
     const text = codeWithoutComments(readText(f.abs));
+    const runs = pathRunIndex(text);
     for (const target of scriptSet) {
       if (target === f.rel || imported.has(target)) continue;
       const bareTarget = normalizedScriptPath(target);
       const relativeFromScript = normalizedScriptPath(path.posix.relative(path.posix.dirname(f.rel), target));
       const variants = new Set([bareTarget, `./${bareTarget}`, relativeFromScript, `./${relativeFromScript}`]);
-      if ([...variants].some((candidate) => mentionsPath(text, candidate)) && !allowed.has(`${f.rel}->${target}`)) out.push(violation('scripts/chain', [f.rel, target], `Script invokes another script path: ${f.rel} -> ${target}`, `${f.rel}->${target}`));
+      if ([...variants].some((candidate) => mentionsIndexed(text, runs, candidate)) && !allowed.has(`${f.rel}->${target}`)) out.push(violation('scripts/chain', [f.rel, target], `Script invokes another script path: ${f.rel} -> ${target}`, `${f.rel}->${target}`));
     }
   }
   out.push(...packageScriptViolations(root, config, packageFiles));

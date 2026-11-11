@@ -6,7 +6,25 @@ import { SOURCE_EXTENSIONS } from '../defaults.mjs';
 
 export const toPosix = (p) => p.split(path.sep).join('/');
 export const exists = (p) => fs.existsSync(p);
-export const readText = (p) => fs.readFileSync(p, 'utf8');
+// PERF (measured 2026-11-12): the analyzers read the same files one after
+// another (duplicates read some twice, five analyzers read the tree), and file
+// reads were the largest cost of a check. One text per path per process. Any
+// write through this module or comparison's checkouts forgets the path first.
+// Only a single check run caches: outside withTextCache every read goes to disk,
+// so callers that write fixtures with plain fs between runs never see stale text.
+let textCache = null;
+export const readText = (p) => {
+  if (!textCache) return fs.readFileSync(p, 'utf8');
+  let text = textCache.get(p);
+  if (text === undefined) { text = fs.readFileSync(p, 'utf8'); textCache.set(p, text); }
+  return text;
+};
+export const forgetText = (p) => { if (textCache) textCache.delete(p); };
+export const withTextCache = (run) => {
+  const outer = textCache;
+  textCache = new Map();
+  try { return run(); } finally { textCache = outer; }
+};
 export const readJson = (p, fallback = null) => {
   try { return JSON.parse(readText(p)); } catch { return fallback; }
 };
@@ -18,10 +36,12 @@ export const readJsonStrict = (p, label = toPosix(p)) => {
   catch (error) { throw new Error(`Invalid JSON in ${label}: ${error.message}`); }
 };
 export const writeJson = (p, value) => {
+  forgetText(p);
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, JSON.stringify(value, null, 2) + '\n');
 };
 export const writeText = (p, value) => {
+  forgetText(p);
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, value);
 };
