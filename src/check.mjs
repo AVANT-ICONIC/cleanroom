@@ -1,3 +1,4 @@
+import { withTextCache } from './lib/fs.mjs';
 import { scan } from './scanner.mjs';
 import { loadConfig } from './config.mjs';
 import { loadBaseline } from './baseline.mjs';
@@ -28,7 +29,10 @@ function resolveCommit(root, ref) {
   catch { return null; }
 }
 
-export function evaluateCheck(root, { explicitCompareRef = null } = {}) {
+export function evaluateCheck(root, options = {}) {
+  return withTextCache(() => evaluateCheckUncached(root, options));
+}
+function evaluateCheckUncached(root, { explicitCompareRef = null } = {}) {
   const config = loadConfig(root);
   const baseline = loadBaseline(root, config);
   if (!baseline) return { error: 'No Green Room baseline found. Run `greenroom baseline` after reviewing the first audit.', exitCode: 2 };
