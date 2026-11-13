@@ -49,3 +49,18 @@ test('no tree or a disabled cache reads and writes nothing', () => {
 test('the checker hash covers the package source', () => {
   assert.match(checkerHash(), /^[0-9a-f]{64}$/);
 });
+
+test('a cached base scan is byte-equal to the fresh scan it replaces', () => {
+  const dir = tmp();
+  const fresh = { violations: [
+    { id: 'a', rule: 'scripts/chain', file: 'tools/x.mjs', message: 'Script invokes another script', fingerprint: 'f1', line: 3 },
+    { id: 'b', rule: 'duplicate', file: null, message: 'ünïcode ✓', fingerprint: 'f2' },
+  ] };
+  writeBaseScan(TREE, fresh, { dir });
+  const hit = readBaseScan(TREE, { dir });
+  assert.equal(hit.hit, true);
+  assert.equal(JSON.stringify(hit.value), JSON.stringify(fresh), 'the cached verdict is the fresh one, byte for byte');
+  const none = tmp();
+  writeBaseScan(TREE, { none: true }, { dir: none });
+  assert.equal(JSON.stringify(readBaseScan(TREE, { dir: none }).value), JSON.stringify({ none: true }));
+});
