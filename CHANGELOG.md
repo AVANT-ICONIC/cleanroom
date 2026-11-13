@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.1 — 2026-11-13
+
+- scripts: the chain-mention scan reads each file's path runs once and binary-searches each candidate (#12). Measured on the testrunner (linux arm64, 4 cores), `greenroom check --against=master` on the same apex-nexus master, two runs each: cold 15.5-16.8 s before, 13.3-13.5 s after; warm (base scan cached) 6.95-7.06 s before, 5.9-6.0 s after. Verdict identical in every run (110 reference, 110 current, 0 new).
+- check: the base-scan cache is pinned by a byte-equal test: a cached scan read back is JSON-identical to the fresh scan it replaces (`test/base-cache.test.mjs`).
+
 ## 1.2.0 — 2026-11-08
 
 - check: half the memory and twice the speed, same verdict. Measured on apex-nexus (5,961 files), full scan output byte-identical, three interleaved runs each: peak RSS 163-167 MB and 8.3-9.6 s before, 105-111 MB and 5.5-5.9 s after.
